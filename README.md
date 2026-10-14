@@ -35,8 +35,11 @@ It was designed for Minecraft, but the core works in any window.
 | **Left / Right** | Each side has its own hotkey and CPS (1–100) |
 | **Inventory** | Click with the cursor visible (off = in-game only) |
 | **Blockhit** | While right click is held, releases the block only during the hit |
-| **Jitter + Speed** | Tiny mouse movements on every click, undone on the next one |
+| **Jitter + Speed** | Tiny mouse movements on every left click, undone on the next one (up to 15 px). Works **only while Minecraft, or a known Minecraft launcher/client, is the active window**; auto click itself works everywhere. Left click only |
 | **Target window only** | Acts only while the captured window is in focus |
+| **Hover tips** | Rest the mouse on a function name for ~3 seconds to see what it does |
+| **Activation mode** (Settings) | *Hold the button* (default) or *Press once* to click non-stop, like a classic autoclicker |
+| **Hide to tray** | The green dot hides the window in the system tray; it keeps working in the background |
 
 ### Macros
 | Feature | What it does |
@@ -68,7 +71,10 @@ What GNClicker does **not** do:
 
 It only uses standard Windows APIs: `mouse_event` / `SendInput` (clicks and key presses), `GetAsyncKeyState`
 (only the keys you configured), a mouse hook (physical button state and scroll only), `GetCursorInfo`,
-`GetForegroundWindow` and `PlaySound`. **There is no keyboard hook.**
+`GetForegroundWindow`, `PlaySound` and `Shell_NotifyIcon` (tray icon). **There is no keyboard hook.**
+To know whether Minecraft is in focus (Jitter only), it reads the **title and the program file name of the active window**
+(for example `javaw.exe`), and nothing else about other programs: it never reads their memory. It never clicks while its
+own window is the active one.
 Files it touches: its own `config.txt` in `%APPDATA%\GNClicker` and a `sounds` folder next to the executable
 (created on first run, read-only use); it also reads `%APPDATA%\.minecraft\options.txt` when you press *Fetch Binds*.
 

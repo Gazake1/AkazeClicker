@@ -17,7 +17,7 @@ O GNClicker aperta o botão do mouse por você, na velocidade que escolher (1 a 
 segura o botão. Arme com uma tecla de atalho, segure o botão do mouse e ele clica enquanto você segurar. Foi pensado
 para Minecraft, mas o núcleo funciona em qualquer janela.
 
-- **Clicker:** lado esquerdo e direito com tecla e CPS próprios, *Inventory*, *Blockhit*, *Jitter* e janela alvo.
+- **Clicker:** lado esquerdo e direito com tecla e CPS próprios, *Inventory*, *Blockhit*, *Jitter* (só no clique esquerdo, até 15, **e só quando o Minecraft ou um launcher/client conhecido está na janela ativa**; o auto click funciona em qualquer programa) e janela alvo.
 - **Macros:** *Slot Whitelist* (com *Fetch Binds*), *Throwpot* e *W-Tap*.
 - **Config:** 8 sons de mouse embutidos, 4 sintetizados e qualquer `.wav` na pasta `sounds`; cor do tema e modo Rainbow.
   Tudo é salvo em `%APPDATA%\GNClicker\config.txt`.
@@ -27,7 +27,12 @@ para Minecraft, mas o núcleo funciona em qualquer janela.
 O que ele **não** faz: não acessa a memória de outros processos, não usa a rede, não se instala (sem registro nem
 tarefas agendadas), não se auto-deleta, não roda comandos de shell e não apaga rastros. Usa só APIs padrão do Windows
 (`mouse_event`/`SendInput`, `GetAsyncKeyState` só para as teclas configuradas, um hook de mouse só para estado dos
-botões e scroll, `GetCursorInfo`, `GetForegroundWindow` e `PlaySound`). **Não existe hook de teclado.**
+botões e scroll, `GetCursorInfo`, `GetForegroundWindow`, `PlaySound` e `Shell_NotifyIcon` para o ícone da bandeja). **Não existe hook de teclado.**
+Para saber se o Minecraft está em foco (só para o Jitter), ele lê o **título e o nome do arquivo do programa da janela ativa**
+(por exemplo `javaw.exe`) e mais nada dos outros programas: nunca lê a memória deles. Ele nunca clica enquanto a janela
+do próprio GNClicker está ativa.
+Dicas aparecem ao parar o mouse ~3 s sobre o nome de uma função; a bolinha verde esconde o programa na bandeja; e em
+*Settings* dá para trocar o modo de ativação entre *segurar o botão* (padrão) e *apertar uma vez*.
 
 > [!WARNING]
 > Alguns antivírus marcam qualquer autoclicker como PUA/HackTool, mesmo sem malware. Blockhit, jitter, throwpot e W-tap

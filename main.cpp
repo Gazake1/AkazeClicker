@@ -8,6 +8,10 @@
 //      enquanto voce segura o botao do mouse (depois de armar por uma tecla).
 //    - Macros: blockhit, jitter, whitelist de slots, throwpot e W-tap.
 //    - Opcionalmente so clica quando uma janela especifica esta em foco.
+//    - Jitter (so no clique esquerdo): so age quando a janela ativa parece ser o Minecraft ou um
+//      launcher/client conhecido. Para isso le o TITULO e o NOME DO .EXE da janela ativa (nada mais).
+//    - Nunca clica enquanto a propria janela do GNClicker esta ativa.
+//    - Bolinha verde: esconde a janela na bandeja do sistema (continua funcionando).
 //    - Toca um som de clique e guarda a configuracao em %APPDATA%\GNClicker.
 //
 //  O que este programa NAO FAZ (de proposito):
@@ -19,7 +23,8 @@
 //  Tudo que ele usa sao APIs padrao do Windows:
 //    mouse_event / SendInput (clicar e teclas), GetAsyncKeyState (so as teclas
 //    configuradas), um hook de mouse (so estado fisico dos botoes e scroll),
-//    GetCursorInfo, GetForegroundWindow e PlaySound. Nao ha hook de teclado.
+//    GetCursorInfo, GetForegroundWindow + titulo/nome do .exe da janela ativa (so para saber se e o
+//    Minecraft), Shell_NotifyIcon (icone da bandeja) e PlaySound. Nao ha hook de teclado.
 //
 //  Framework de interface: Dear ImGui + Direct3D 11 (baixado pelo build.bat).
 //  O scaffolding de janela/DX11 abaixo segue o exemplo oficial do Dear ImGui (MIT).
@@ -108,6 +113,37 @@ static std::atomic<int>  g_wtapDelay   { 30 };     // ms com o W solto
 static std::atomic<bool> g_wtapOnlyAuto{ true };   // so durante o autoclick
 static std::atomic<bool> g_wtapRequest { false };
 static std::atomic<bool> g_rainbow     { false };  // tema arco-iris
+static std::atomic<int>  g_clickMode   { 0 };      // 0 = segurar o botao do mouse (padrao); 1 = alternar (a tecla liga/desliga o clique continuo)
+static std::atomic<bool> g_mcFocus     { false };  // a janela ativa parece ser o Minecraft (atualizado por uma thread)
+static HWND              g_hwnd        = nullptr;  // janela principal do programa
+
+// ---- deteccao do Minecraft (usada so pelo Jitter; o auto click funciona em qualquer programa) ----
+// Olha apenas o TITULO e o NOME DO .EXE da janela ativa. Nao le a memoria de nenhum programa.
+// BEGIN_MC_DETECT
+static std::wstring lowerCopy(const std::wstring& s) {
+    std::wstring r = s;
+    for (auto& ch : r) if (ch >= L'A' && ch <= L'Z') ch = (wchar_t)(ch - L'A' + L'a');
+    return r;
+}
+// title = titulo da janela, exe = nome do arquivo do processo (ambos podem ser vazios)
+static bool looksLikeMinecraft(const std::wstring& titleIn, const std::wstring& exeIn) {
+    // nomes do jogo e de launchers/clients famosos
+    static const wchar_t* kNames[] = {
+        L"minecraft", L"lunar client", L"lunarclient", L"badlion", L"feather client", L"feather launcher",
+        L"labymod", L"tlauncher", L"sklauncher", L"prism launcher", L"prismlauncher", L"multimc", L"polymc",
+        L"atlauncher", L"gdlauncher", L"curseforge", L"technic launcher", L"modrinth", L"ftb app"
+    };
+    // navegadores e afins que so tem "minecraft" no titulo (ex.: aba de wiki) nunca contam
+    static const wchar_t* kNotGame[] = {
+        L"chrome.exe", L"msedge.exe", L"firefox.exe", L"opera.exe", L"opera_gx.exe", L"brave.exe", L"vivaldi.exe",
+        L"iexplore.exe", L"explorer.exe", L"notepad.exe", L"code.exe", L"discord.exe", L"whatsapp.exe", L"telegram.exe"
+    };
+    std::wstring title = lowerCopy(titleIn), exe = lowerCopy(exeIn);
+    for (const wchar_t* b : kNotGame) if (exe == b) return false;
+    for (const wchar_t* n : kNames) if (title.find(n) != std::wstring::npos || exe.find(n) != std::wstring::npos) return true;
+    return false;
+}
+// END_MC_DETECT
 
 // Sons de clique: embutidos (originais) + quaisquer .wav que o usuario coloque
 // na pasta "sounds" ao lado do programa. g_sound = -1 significa "nenhum".
@@ -336,6 +372,9 @@ static bool cursorVisible() {
 }
 
 static bool windowOk() {
+    // nunca clica (nem faz jitter) enquanto a janela do proprio GNClicker esta ativa:
+    // senao segurar o botao do mouse para usar o app dispararia o auto click nele mesmo
+    if (g_hwnd && GetForegroundWindow() == g_hwnd) return false;
     if (g_restrict.load()) {
         HWND target = (HWND)g_targetHwnd.load();
         if (!target || GetForegroundWindow() != target) return false;
@@ -369,6 +408,34 @@ static std::string keyName(int vk) {
     return std::string(h);
 }
 
+// ---- espera precisa -----------------------------------------------------------
+// Sleep() no Windows tem granularidade de ~15 ms (e o Windows 11 ignora o timer de 1 ms de programas
+// que nao estao em primeiro plano, como este quando o jogo esta na frente). Isso derrubava o CPS real.
+// Aqui: timer de ALTA resolucao para quase todo o tempo + contagem fina (QueryPerformanceCounter)
+// nos ultimos ~2 ms. Cada thread usa o seu proprio timer.
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+static void preciseSleepUs(long long us) {
+    if (us <= 0) return;
+    LARGE_INTEGER freq, now;
+    ::QueryPerformanceFrequency(&freq);
+    ::QueryPerformanceCounter(&now);
+    const long long target = now.QuadPart + us * freq.QuadPart / 1000000;
+    thread_local HANDLE timer = ::CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (us > 2500) {
+        long long waitUs = us - 2000;
+        bool waited = false;
+        if (timer) {
+            LARGE_INTEGER due;
+            due.QuadPart = -(waitUs * 10);            // 100 ns, negativo = relativo
+            if (::SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) { ::WaitForSingleObject(timer, 1000); waited = true; }
+        }
+        if (!waited) ::Sleep((DWORD)(waitUs / 1000));
+    }
+    do { ::YieldProcessor(); ::QueryPerformanceCounter(&now); } while (now.QuadPart < target);
+}
+
 // ---- thread de clique (uma por botao) ---------------------------------------
 static void clickWorker(Clicker* c) {
     std::mt19937 rng((unsigned)std::chrono::steady_clock::now().time_since_epoch().count());
@@ -376,7 +443,9 @@ static void clickWorker(Clicker* c) {
     while (g_running.load()) {
         bool want = false;
         if (c->enabled.load() && c->armed.load())
-            want = inputDown(c->key.load());   // so clica enquanto o botao esta segurado
+            // modo 0 (padrao): so clica enquanto o botao do mouse esta segurado
+            // modo 1 (Settings): armado = clica continuamente, como um autoclicker comum
+            want = (g_clickMode.load() == 1) ? true : inputDown(c->key.load());
         if (want && windowOk()) {
             // intervalo do ciclo (CPS + variacao humana)
             int cps = c->cps.load();
@@ -387,7 +456,7 @@ static void clickWorker(Clicker* c) {
                 std::uniform_real_distribution<double> d(0.80, 1.20);
                 ms *= d(rng);
             }
-            auto half = std::chrono::microseconds((long long)(ms * 500.0));
+            long long halfUs = (long long)(ms * 500.0);
 
             // Ciclo do clique: segura metade do intervalo, solta,
             // espera a outra metade e SO ENTAO toca o som (som no fim do clique).
@@ -395,21 +464,22 @@ static void clickWorker(Clicker* c) {
             bool bh = c->left && g_blockhit.load() && g_physRight.load();
             if (bh) mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
             mouse_event(c->left ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
-            std::this_thread::sleep_for(half);
+            preciseSleepUs(halfUs);
             mouse_event(c->left ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
             if (bh) mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
             if (c->left) {
                 if (g_wtap.load()) g_wtapRequest.store(true);
-                if (g_jitter.load()) {
+                // jitter so no Minecraft (ou launcher/client conhecido); o clique em si funciona em qualquer janela
+                if (g_jitter.load() && g_mcFocus.load()) {
                     int sp = g_jitterSpeed.load();
-                    if (sp < 1) sp = 1; if (sp > 10) sp = 10;
+                    if (sp < 1) sp = 1; if (sp > 15) sp = 15;
                     std::uniform_int_distribution<int> jd(-sp, sp);
                     int nx = jd(rng), ny = jd(rng);
                     mouse_event(MOUSEEVENTF_MOVE, (DWORD)(nx - offX), (DWORD)(ny - offY), 0, 0);
                     offX = nx; offY = ny;
                 }
             }
-            std::this_thread::sleep_for(half);
+            preciseSleepUs(halfUs);
             playClickSound();
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
@@ -440,13 +510,55 @@ static void hotkeyWorker() {
     }
 }
 
+// ---- detecta se a janela ativa e o Minecraft (atualiza g_mcFocus) ----------------
+// Le so o titulo e o nome do .exe da janela ativa, e so quando ela muda. Nada da memoria dos outros programas.
+static void mcDetectWorker() {
+    HWND lastFg = nullptr;
+    std::wstring lastTitle;
+    bool lastResult = false;
+    while (g_running.load()) {
+        HWND fg = ::GetForegroundWindow();
+        bool res = false;
+        if (fg && fg != g_hwnd) {
+            wchar_t t[256] = {0};
+            ::GetWindowTextW(fg, t, 255);
+            std::wstring title = t;
+            if (fg != lastFg || title != lastTitle) {
+                std::wstring exe;
+                DWORD pid = 0;
+                ::GetWindowThreadProcessId(fg, &pid);
+                if (pid) {
+                    HANDLE h = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+                    if (h) {
+                        wchar_t p[MAX_PATH] = {0};
+                        DWORD n = MAX_PATH;
+                        if (::QueryFullProcessImageNameW(h, 0, p, &n)) {
+                            exe = p;
+                            size_t s = exe.find_last_of(L"\\/");
+                            if (s != std::wstring::npos) exe = exe.substr(s + 1);
+                        }
+                        ::CloseHandle(h);
+                    }
+                }
+                lastResult = looksLikeMinecraft(title, exe);
+                lastFg = fg; lastTitle = title;
+            }
+            res = lastResult;
+        } else {
+            lastFg = nullptr;
+        }
+        g_mcFocus.store(res);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    }
+}
+
 // ---- throwpot: troca para o slot da pocao, usa (RMB) e volta ao slot anterior ----
 static void throwWorker() {
     int prev = 0;
     while (g_running.load()) {
         int vk = g_throwKey.load();
         bool d = (vk > 0) && keyDown(vk);
-        if (d && !prev) {
+        if (d && !prev && !(g_hwnd && GetForegroundWindow() == g_hwnd)) {   // nunca dispara dentro do proprio app
             int from = g_curSlot.load();
             int slot = g_throwSlot.load();
             if (slot < 0) slot = 0; if (slot > 8) slot = 8;
@@ -501,7 +613,11 @@ static const float kWinW = 760.0f, kWinH = 520.0f;   // area de cliente da janel
 static const float kTitleH = 46.0f;                  // altura da barra de titulo propria
 static const float kSideW  = 176.0f;                 // largura da barra lateral
 
-static HWND   g_hwnd = nullptr;
+#define WM_TRAYICON     (WM_APP + 1)                 // mensagens do icone da bandeja
+#define WM_HIDE_TO_TRAY (WM_APP + 2)                 // pedido interno: esconder a janela na bandeja
+#define ID_TRAY_SHOW    1001
+#define ID_TRAY_EXIT    1002
+
 static ImFont* g_fontBold = nullptr;                 // Segoe UI Bold (numero grande do CPS)
 static int    s_page = 0;                            // 0 Clicker, 1 Macros, 2 Sounds, 3 Binds, 4 Themes, 5 Settings
 static int    s_side = 0;                            // 0 = esquerdo, 1 = direito
@@ -512,6 +628,8 @@ static std::string s_bindsMsg;                       // retorno do botao "Fetch 
 static bool  s_capturing = false;                    // capturando uma tecla/botao?
 static std::atomic<int>* s_captureKey = nullptr;     // onde gravar a tecla capturada
 static bool  s_captureArmed = false;                 // ja soltou todas as teclas uma vez?
+static std::chrono::steady_clock::time_point s_captureDeadline;   // a captura de tecla expira em 10 s
+static const int kCaptureSeconds = 10;
 static bool  s_countdownActive = false;
 static std::chrono::steady_clock::time_point s_countdownEnd;
 
@@ -530,6 +648,7 @@ static void saveConfig() {
     FILE* f = fopen(cfgPath().c_str(), "w");
     if (!f) return;
     fprintf(f, "lang=%d\n", g_lang);
+    fprintf(f, "clickMode=%d\n", g_clickMode.load());
     fprintf(f, "armKeyL=%d\n", g_left.armKey.load());
     fprintf(f, "armKeyR=%d\n", g_right.armKey.load());
     fprintf(f, "cpsL=%d\n",    g_left.cps.load());
@@ -569,6 +688,7 @@ static void loadConfig() {
         std::string v = s.substr(eq + 1);
         while (!v.empty() && (v.back()=='\n' || v.back()=='\r' || v.back()==' ')) v.pop_back();
         if      (k == "lang")    g_lang = (atoi(v.c_str()) == 1) ? 1 : 0;
+        else if (k == "clickMode") g_clickMode.store(atoi(v.c_str()) == 1 ? 1 : 0);
         else if (k == "armKeyL") g_left.armKey.store(atoi(v.c_str()));
         else if (k == "armKeyR") g_right.armKey.store(atoi(v.c_str()));
         else if (k == "cpsL")    { int iv=atoi(v.c_str()); g_left.cps.store(iv<1?1:(iv>100?100:iv)); }
@@ -580,7 +700,7 @@ static void loadConfig() {
         else if (k == "inventory")   g_inventory.store(atoi(v.c_str()) != 0);
         else if (k == "blockhit")    g_blockhit.store(atoi(v.c_str()) != 0);
         else if (k == "jitter")      g_jitter.store(atoi(v.c_str()) != 0);
-        else if (k == "jitterSpeed") { int iv=atoi(v.c_str()); g_jitterSpeed.store(iv<1?1:(iv>10?10:iv)); }
+        else if (k == "jitterSpeed") { int iv=atoi(v.c_str()); g_jitterSpeed.store(iv<1?1:(iv>15?15:iv)); }
         else if (k == "slotFilter")  g_slotFilter.store(atoi(v.c_str()) != 0);
         else if (k == "slotMask")    { int m=atoi(v.c_str()); for (int i=0;i<9;++i) g_slotAllowed[i].store((m>>i)&1); }
         else if (k.compare(0, 6, "hotbar") == 0 && k.size() == 7 && isdigit((unsigned char)k[6])) {
@@ -607,6 +727,7 @@ static void resetDefaults() {
     g_throwKey.store(0); g_throwSlot.store(1); g_throwDelay.store(50); g_throwReturn.store(true);
     g_wtap.store(false); g_wtapDelay.store(30); g_wtapOnlyAuto.store(true);
     g_rainbow.store(false);
+    g_clickMode.store(0);
     g_accent[0] = 1.00f; g_accent[1] = 0.23f; g_accent[2] = 0.27f;
     setSoundByName("Default");
     saveConfig();
@@ -642,6 +763,19 @@ static void setupStyle() {
     s.WindowPadding = ImVec2(0,0); s.FramePadding = ImVec2(12,8);
     s.ItemSpacing = ImVec2(10,10); s.ItemInnerSpacing = ImVec2(8,6);
     s.WindowBorderSize = 0; s.ChildBorderSize = 0; s.FrameBorderSize = 0; s.ScrollbarSize = 7;
+    s.HoverDelayNormal = 3.0f;   // dicas das funcoes aparecem depois de ~3 s com o mouse parado em cima
+}
+
+// Dica (tooltip) com o resumo da funcao: aparece depois de ~3 s com o mouse em cima do ultimo item.
+static void hoverTip(const char* tip) {
+    if (!tip || !*tip) return;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_NoSharedDelay)) {
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 25.0f);
+        ImGui::TextUnformatted(tip);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
 }
 
 // Aplica o tema (chamado a cada frame -> acompanha a cor ao vivo e o modo Rainbow).
@@ -678,6 +812,12 @@ static void applyTheme() {
 
 static void captureKeyStep() {
     if (!s_capturing || !s_captureKey) return;
+    // a captura expira em 10 s sem tecla: cancela e mantem o bind que ja existia
+    if (std::chrono::steady_clock::now() >= s_captureDeadline) {
+        s_capturing = false;
+        s_captureKey = nullptr;
+        return;
+    }
     // espera soltar tudo antes de aceitar a proxima tecla
     if (!s_captureArmed) {
         bool anyDown = false;
@@ -688,7 +828,7 @@ static void captureKeyStep() {
     for (int vk = 1; vk < 256; ++vk) {
         if (vk == VK_CAPITAL || vk == VK_NUMLOCK || vk == VK_SCROLL) continue;
         if (GetAsyncKeyState(vk) & 0x8000) {
-            s_captureKey->store(vk);
+            s_captureKey->store(vk == VK_ESCAPE ? 0 : vk);   // Esc = deixar o bind vazio
             s_capturing = false;
             s_captureKey = nullptr;
             saveConfig();
@@ -700,11 +840,12 @@ static void captureKeyStep() {
 // ---- widgets proprios -----------------------------------------------------------
 
 // Linha com texto e interruptor liga/desliga (como nos apps modernos).
-static bool toggleRow(const char* id, const char* label, bool* v, const char* hint = nullptr) {
+static bool toggleRow(const char* id, const char* label, bool* v, const char* hint = nullptr, const char* tip = nullptr) {
     ImGui::PushID(id);
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x, h = 46.0f;
     ImGui::InvisibleButton("##row", ImVec2(w, h));
+    hoverTip(tip);
     bool changed = false;
     if (ImGui::IsItemClicked()) { *v = !*v; changed = true; }
     if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -724,13 +865,15 @@ static bool toggleRow(const char* id, const char* label, bool* v, const char* hi
 }
 
 // Slider fino com preenchimento na cor do tema e botao redondo.
-static bool accentSlider(const char* id, const char* label, int* v, int vmin, int vmax) {
+static bool accentSlider(const char* id, const char* label, int* v, int vmin, int vmax, const char* tip = nullptr) {
     ImGui::PushID(id);
     float w = ImGui::GetContentRegionAvail().x;
     ImGui::TextColored(kMuted, "%s: %d", label, *v);
+    hoverTip(tip);
     ImVec2 q = ImGui::GetCursorScreenPos();
     const float h = 26.0f;
     ImGui::InvisibleButton("##sl", ImVec2(w, h));
+    hoverTip(tip);
     bool active = ImGui::IsItemActive();
     bool changed = false;
     if (active) {
@@ -755,7 +898,7 @@ static bool accentSlider(const char* id, const char* label, int* v, int vmin, in
 }
 
 // Seletor de duas opcoes (ex.: Left Click | Right Click).
-static bool segmented(const char* id, const char* a, const char* b, int* sel, float w = 280.0f) {
+static bool segmented(const char* id, const char* a, const char* b, int* sel, float w = 280.0f, const char* tip = nullptr) {
     ImGui::PushID(id);
     ImVec2 p = ImGui::GetCursorScreenPos();
     const float h = 38.0f;
@@ -770,6 +913,7 @@ static bool segmented(const char* id, const char* a, const char* b, int* sel, fl
         ImGui::SetCursorScreenPos(c0);
         ImGui::PushID(i);
         if (ImGui::InvisibleButton("##seg", ImVec2(c1.x - c0.x, c1.y - c0.y)) && *sel != i) { *sel = i; changed = true; }
+        hoverTip(tip);
         if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         float t = animTo(ImGui::GetID("a"), (*sel == i) ? 1.0f : 0.0f);
         ImGui::PopID();
@@ -789,11 +933,18 @@ static bool segmented(const char* id, const char* a, const char* b, int* sel, fl
 static void keyBindPill(const char* id, std::atomic<int>* target, float w = 150.0f) {
     ImGui::PushID(id);
     bool cap = s_capturing && s_captureKey == target;
-    std::string txt = cap ? std::string(L("Press a key...", "Pressione uma tecla...")) : keyName(target->load());
+    std::string txt;
+    if (cap) {   // mostra a contagem regressiva de 10 s
+        double left = std::chrono::duration<double>(s_captureDeadline - std::chrono::steady_clock::now()).count();
+        txt = std::string(L("Press a key... ", "Pressione uma tecla... ")) + std::to_string((int)ceil(left < 0 ? 0 : left)) + "s";
+    } else {
+        txt = keyName(target->load());
+    }
     const float h = 32.0f;
     ImVec2 p = ImGui::GetCursorScreenPos();
     if (ImGui::InvisibleButton("##k", ImVec2(w, h)) && !cap) {
         s_capturing = true; s_captureKey = target; s_captureArmed = false;
+        s_captureDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(kCaptureSeconds);
     }
     bool hov = ImGui::IsItemHovered();
     if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -807,13 +958,17 @@ static void keyBindPill(const char* id, std::atomic<int>* target, float w = 150.
 }
 
 // Linha "texto a esquerda, bind a direita".
-static void bindRow(const char* id, const char* label, std::atomic<int>* target) {
+static void bindRow(const char* id, const char* label, std::atomic<int>* target, const char* tip = nullptr) {
     ImGui::PushID(id);
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x, h = 48.0f;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 ts = ImGui::CalcTextSize(label);
     dl->AddText(ImVec2(p.x, p.y + (h - ts.y) * 0.5f), u32(kText), label);
+    // area do nome da funcao (a esquerda do botao de bind): dica depois de ~3 s
+    ImGui::SetCursorScreenPos(p);
+    ImGui::InvisibleButton("##lbl", ImVec2(w - 160.0f, h));
+    hoverTip(tip);
     ImGui::SetCursorScreenPos(ImVec2(p.x + w - 150.0f, p.y + (h - 32.0f) * 0.5f));
     keyBindPill("pill", target, 150.0f);
     dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + w, p.y + h), u32(col(1,1,1,0.06f)));
@@ -823,18 +978,20 @@ static void bindRow(const char* id, const char* label, std::atomic<int>* target)
 }
 
 // Cabecalho de secao (texto pequeno em maiusculas).
-static void sectionTitle(const char* text) {
+static void sectionTitle(const char* text, const char* tip = nullptr) {
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::TextColored(alpha(accentCol(), 0.95f), "%s", text);
+    hoverTip(tip);
     ImGui::Dummy(ImVec2(0, 0));
 }
 
 // Botao simples no estilo do tema.
-static bool pillButton(const char* label, float w = 0.0f) {
+static bool pillButton(const char* label, float w = 0.0f, const char* tip = nullptr) {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 16.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(18, 8));
     bool r = ImGui::Button(label, ImVec2(w, 0));
     ImGui::PopStyleVar(2);
+    hoverTip(tip);
     return r;
 }
 
@@ -901,7 +1058,10 @@ static void sidebarItem(int idx, const char* label) {
 
 static void pageClicker() {
     Clicker* c = (s_side == 0) ? &g_left : &g_right;
-    segmented("side", L("Left Click", "Clique Esquerdo"), L("Right Click", "Clique Direito"), &s_side, 300.0f);
+    bool leftSide = (s_side == 0);
+    segmented("side", L("Left Click", "Clique Esquerdo"), L("Right Click", "Clique Direito"), &s_side, 300.0f,
+              L("Choose which mouse button you are setting up. Each side has its own CPS, hotkey and on/off state.",
+                "Escolha qual botão do mouse você está configurando. Cada lado tem seu próprio CPS, tecla e estado ligado/desligado."));
     ImGui::Dummy(ImVec2(0, 2));
 
     // cartao grande com o CPS
@@ -920,6 +1080,11 @@ static void pageClicker() {
     const char* lab = "C P S";
     ImVec2 ls = ImGui::CalcTextSize(lab);
     dl->AddText(ImVec2(p.x + (w - ls.x) * 0.5f, p.y + h - 28.0f), u32(kMuted), lab);
+    // area central do cartao: so para a dica
+    ImGui::SetCursorScreenPos(ImVec2(p.x + 90.0f, p.y));
+    ImGui::InvisibleButton("##cpsTip", ImVec2(w - 180.0f, h));
+    hoverTip(L("CPS = clicks per second. A higher number clicks faster. Many games and servers limit how fast clicks count.",
+               "CPS = cliques por segundo. Quanto maior o número, mais rápido ele clica. Muitos jogos e servidores limitam a velocidade dos cliques."));
     // botoes - e + nas laterais do cartao
     for (int i = 0; i < 2; ++i) {
         ImVec2 bc(i == 0 ? p.x + 44.0f : p.x + w - 44.0f, p.y + h * 0.5f - 6.0f);
@@ -940,29 +1105,48 @@ static void pageClicker() {
     ImGui::Dummy(ImVec2(w, 0));
 
     int sv = cps;
-    if (accentSlider("cps", L("Clicks per second", "Cliques por segundo"), &sv, 1, 100)) { c->cps.store(sv); saveConfig(); }
+    if (accentSlider("cps", L("Clicks per second", "Cliques por segundo"), &sv, 1, 100,
+                     L("Drag to set how many times per second this side clicks (1 to 100).",
+                       "Arraste para definir quantas vezes por segundo este lado clica (1 a 100)."))) { c->cps.store(sv); saveConfig(); }
 
     bool armed = c->armed.load();
     char hintA[64]; snprintf(hintA, sizeof(hintA), "[%s]", keyName(c->armKey.load()).c_str());
-    if (toggleRow("auto", L("Auto Click", "Clique Automático"), &armed, hintA)) c->armed.store(armed);
+    if (toggleRow("auto", L("Auto Click", "Clique Automático"), &armed, hintA,
+                  L("Turns the auto clicker on or off for this side (its hotkey does the same). Works in any program, not only Minecraft. By default you also hold the mouse button to click; Settings has an option to click without holding.",
+                    "Liga ou desliga o clique automático deste lado (a tecla dele faz o mesmo). Funciona em qualquer programa, não só no Minecraft. Por padrão você também segura o botão do mouse para clicar; em Settings há uma opção para clicar sem segurar."))) c->armed.store(armed);
 
-    bool jt = g_jitter.load();
-    if (toggleRow("jitter", "Jitter", &jt)) { g_jitter.store(jt); saveConfig(); }
-    if (jt) {
-        int sp = g_jitterSpeed.load();
-        if (accentSlider("jspeed", L("Jitter intensity", "Intensidade do jitter"), &sp, 1, 10)) { g_jitterSpeed.store(sp); saveConfig(); }
+    // Jitter e Blockhit so existem para o clique ESQUERDO
+    if (leftSide) {
+        bool jt = g_jitter.load();
+        if (toggleRow("jitter", "Jitter", &jt, L("(Minecraft only)", "(só no Minecraft)"),
+                      L("Adds tiny random mouse movements while auto clicking, so your aim looks less robotic. It only works while Minecraft (or a known Minecraft launcher or client) is the active window; the auto click itself works everywhere.",
+                        "Adiciona pequenos movimentos aleatórios do mouse enquanto clica, para a mira parecer menos robótica. Só funciona quando o Minecraft (ou um launcher/client conhecido) é a janela ativa; o clique automático em si funciona em qualquer lugar."))) { g_jitter.store(jt); saveConfig(); }
+        if (jt) {
+            int sp = g_jitterSpeed.load();
+            if (accentSlider("jspeed", L("Jitter intensity", "Intensidade do jitter"), &sp, 1, 15,
+                             L("How far the mouse moves on each click, in pixels (1 to 15). Lower is subtler.",
+                               "Quanto o mouse se move a cada clique, em pixels (1 a 15). Menor é mais discreto."))) { g_jitterSpeed.store(sp); saveConfig(); }
+        }
+        bool bh = g_blockhit.load();
+        if (toggleRow("bh", "Blockhit", &bh, L("(hold right click)", "(segure o botão direito)"),
+                      L("Minecraft PvP: lets you keep blocking with a sword while you hit. While you hold the right mouse button, each automatic left click briefly releases the block and then blocks again. Left click only.",
+                        "PvP do Minecraft: deixa você continuar bloqueando com a espada enquanto bate. Enquanto você segura o botão direito do mouse, cada clique esquerdo automático solta o bloqueio por um instante e bloqueia de novo. Só no clique esquerdo."))) { g_blockhit.store(bh); saveConfig(); }
     }
-    bool bh = g_blockhit.load();
-    if (toggleRow("bh", "Blockhit", &bh, L("(hold right click)", "(segure o botão direito)"))) { g_blockhit.store(bh); saveConfig(); }
     bool inv = g_inventory.load();
-    if (toggleRow("inv", "Inventory", &inv, L("(click with the cursor visible)", "(clicar com o cursor visível)"))) { g_inventory.store(inv); saveConfig(); }
+    if (toggleRow("inv", "Inventory", &inv, L("(click with the cursor visible)", "(clicar com o cursor visível)"),
+                  L("Allows clicking while the mouse cursor is visible (menus, inventories, the desktop). When off, it only clicks while the cursor is hidden, which is what happens inside a game.",
+                    "Permite clicar enquanto o cursor do mouse está visível (menus, inventários, área de trabalho). Desligado, só clica com o cursor escondido, que é o que acontece dentro de um jogo."))) { g_inventory.store(inv); saveConfig(); }
     bool snd = g_sound.load() >= 0;
-    if (toggleRow("snd", L("Click Sounds", "Sons de Clique"), &snd)) {
+    if (toggleRow("snd", L("Click Sounds", "Sons de Clique"), &snd, nullptr,
+                  L("Plays a sound on every automatic click. Pick which sound on the Sounds page.",
+                    "Toca um som a cada clique automático. Escolha o som na página Sounds."))) {
         if (snd) g_sound.store(s_lastSound >= 0 ? s_lastSound : 0); else { s_lastSound = g_sound.load(); g_sound.store(-1); }
         saveConfig();
     }
     bool rs = g_restrict.load();
-    if (toggleRow("win", L("Target window only", "Só na janela alvo"), &rs)) g_restrict.store(rs);
+    if (toggleRow("win", L("Target window only", "Só na janela alvo"), &rs, nullptr,
+                  L("Limits the auto clicker to a single window. Press Capture, switch to that window within 3 seconds, and it will only click while that window is active.",
+                    "Limita o clique automático a uma única janela. Aperte Capturar, troque para essa janela em até 3 segundos, e ele só clica enquanto ela estiver ativa."))) g_restrict.store(rs);
     // captura de janela alvo
     if (s_countdownActive) {
         auto left = std::chrono::duration_cast<std::chrono::milliseconds>(s_countdownEnd - std::chrono::steady_clock::now()).count();
@@ -978,7 +1162,9 @@ static void pageClicker() {
             std::string lb = std::string(L("Focus your game... ", "Foque o jogo... ")) + std::to_string(left / 1000 + 1);
             pillButton(lb.c_str());
         }
-    } else if (pillButton(L("Capture window (3s)", "Capturar janela (3s)"))) {
+    } else if (pillButton(L("Capture window (3s)", "Capturar janela (3s)"), 0.0f,
+                          L("Starts a 3 second countdown. Switch to the window you want to limit the auto clicker to.",
+                            "Inicia uma contagem de 3 segundos. Troque para a janela à qual você quer limitar o clique automático."))) {
         s_countdownActive = true;
         s_countdownEnd = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     }
@@ -988,9 +1174,13 @@ static void pageClicker() {
 }
 
 static void pageMacros() {
-    sectionTitle(L("SLOT WHITELIST", "WHITELIST DE SLOTS"));
+    sectionTitle(L("SLOT WHITELIST", "WHITELIST DE SLOTS"),
+                 L("Minecraft hotbar filter: the auto clicker only works while one of the ticked hotbar slots (1 to 9) is selected. Handy to click only with a sword, and not with a block or a bow.",
+                   "Filtro da hotbar do Minecraft: o clique automático só funciona enquanto um dos slots marcados (1 a 9) está selecionado. Útil para clicar só com a espada, e não com um bloco ou arco."));
     bool sf = g_slotFilter.load();
-    if (toggleRow("sf", L("Click only on selected slots", "Clicar só nos slots marcados"), &sf)) { g_slotFilter.store(sf); saveConfig(); }
+    if (toggleRow("sf", L("Click only on selected slots", "Clicar só nos slots marcados"), &sf, nullptr,
+                  L("When on, the auto clicker only clicks while the selected hotbar slot is one of the ticked numbers below.",
+                    "Ligado, o clique automático só clica quando o slot selecionado da hotbar é um dos números marcados abaixo."))) { g_slotFilter.store(sf); saveConfig(); }
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec4 acc = accentCol();
@@ -1001,6 +1191,8 @@ static void pageMacros() {
         ImGui::PushID(i);
         bool on = g_slotAllowed[i].load();
         if (ImGui::InvisibleButton("##slot", ImVec2(46, 46))) { g_slotAllowed[i].store(!on); on = !on; saveConfig(); }
+        hoverTip(L("Click a number to allow or block that hotbar slot. The small dot shows the slot you are probably holding.",
+                   "Clique em um número para permitir ou bloquear esse slot da hotbar. O pontinho mostra o slot que você provavelmente está segurando."));
         bool hv = ImGui::IsItemHovered();
         if (hv) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         dl->AddRectFilled(p, ImVec2(p.x + 46, p.y + 46), u32(on ? alpha(acc, hv ? 0.30f : 0.20f) : col(hv ? 0.14f : 0.10f, hv ? 0.14f : 0.10f, hv ? 0.17f : 0.125f, 1)), 12.0f);
@@ -1014,29 +1206,47 @@ static void pageMacros() {
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + 56.0f));
     ImGui::Dummy(ImVec2(0, 0));
     ImGui::TextColored(kMuted, "%s %d", L("Current slot (estimated):", "Slot atual (estimado):"), cur + 1);
-    if (pillButton(L("Fetch Minecraft binds", "Ler binds do Minecraft"))) {
+    if (pillButton(L("Fetch Minecraft binds", "Ler binds do Minecraft"), 0.0f,
+                   L("Reads your hotbar keys from Minecraft's options.txt, so slot detection matches your own key binds. Read-only: nothing is changed in the game.",
+                     "Lê as teclas da sua hotbar no options.txt do Minecraft, para a detecção de slot bater com as suas teclas. Somente leitura: nada é alterado no jogo."))) {
         s_bindsMsg = fetchMinecraftBinds() ? L("Binds loaded from Minecraft.", "Binds lidos do Minecraft.")
                                            : L("options.txt not found (or default binds).", "options.txt não encontrado (ou binds padrão).");
         saveConfig();
     }
     ImGui::SameLine(); ImGui::TextColored(kMuted, "%s", s_bindsMsg.c_str());
 
-    sectionTitle("THROWPOT");
-    bindRow("tpk", L("Key", "Tecla"), &g_throwKey);
+    sectionTitle("THROWPOT",
+                 L("Minecraft potion macro: one key press switches to your potion slot, throws the potion (right click) and, if enabled, goes back to the slot you were holding.",
+                   "Macro de poção do Minecraft: um aperto de tecla troca para o slot da poção, arremessa (clique direito) e, se ativado, volta ao slot que você estava segurando."));
+    bindRow("tpk", L("Key", "Tecla"), &g_throwKey,
+            L("The key that runs the Throwpot macro. Empty means the macro is off.",
+              "A tecla que executa a macro Throwpot. Vazio significa macro desligada."));
     int ts = g_throwSlot.load() + 1;
-    if (accentSlider("tps", L("Potion slot", "Slot da poção"), &ts, 1, 9)) { g_throwSlot.store(ts - 1); saveConfig(); }
+    if (accentSlider("tps", L("Potion slot", "Slot da poção"), &ts, 1, 9,
+                     L("The hotbar slot (1 to 9) where you keep your potions.",
+                       "O slot da hotbar (1 a 9) onde ficam as suas poções."))) { g_throwSlot.store(ts - 1); saveConfig(); }
     int td = g_throwDelay.load();
-    if (accentSlider("tpd", L("Delay (ms)", "Delay (ms)"), &td, 10, 500)) { g_throwDelay.store(td); saveConfig(); }
+    if (accentSlider("tpd", L("Delay (ms)", "Delay (ms)"), &td, 10, 500,
+                     L("Pause between each step of the macro, in milliseconds. Raise it if the game sometimes misses the slot switch.",
+                       "Pausa entre cada passo da macro, em milissegundos. Aumente se o jogo às vezes perder a troca de slot."))) { g_throwDelay.store(td); saveConfig(); }
     bool tr = g_throwReturn.load();
-    if (toggleRow("tpr", L("Return to previous slot", "Voltar ao slot anterior"), &tr)) { g_throwReturn.store(tr); saveConfig(); }
+    if (toggleRow("tpr", L("Return to previous slot", "Voltar ao slot anterior"), &tr, nullptr,
+                  L("After throwing, switch back to the slot you were holding before.",
+                    "Depois de arremessar, volta para o slot que você estava segurando antes."))) { g_throwReturn.store(tr); saveConfig(); }
 
-    sectionTitle("W-TAP");
+    sectionTitle("W-TAP",
+                 L("Minecraft sprint reset: right after a hit, the W key (forward) is released for a few milliseconds and pressed again. This resets your sprint, which can increase knockback.",
+                   "Reset de sprint do Minecraft: logo depois de um golpe, a tecla W (frente) é solta por alguns milissegundos e apertada de novo. Isso reseta o sprint, o que pode aumentar o knockback."));
     bool wt = g_wtap.load();
-    if (toggleRow("wt", L("Enable W-Tap", "Ativar W-Tap"), &wt)) { g_wtap.store(wt); saveConfig(); }
+    if (toggleRow("wt", L("Enable W-Tap", "Ativar W-Tap"), &wt, nullptr,
+                  L("Turns the W-Tap macro on or off.", "Liga ou desliga a macro W-Tap."))) { g_wtap.store(wt); saveConfig(); }
     int wd = g_wtapDelay.load();
-    if (accentSlider("wtd", L("Delay (ms)", "Delay (ms)"), &wd, 5, 200)) { g_wtapDelay.store(wd); saveConfig(); }
+    if (accentSlider("wtd", L("Delay (ms)", "Delay (ms)"), &wd, 5, 200,
+                     L("How long W stays released, in milliseconds.", "Por quanto tempo o W fica solto, em milissegundos."))) { g_wtapDelay.store(wd); saveConfig(); }
     bool wo = g_wtapOnlyAuto.load();
-    if (toggleRow("wto", L("Only while autoclicking", "Só durante o autoclick"), &wo)) { g_wtapOnlyAuto.store(wo); saveConfig(); }
+    if (toggleRow("wto", L("Only while autoclicking", "Só durante o autoclick"), &wo, nullptr,
+                  L("On: W-Tap only reacts to the auto clicker's hits. Off: it also reacts to your own manual left clicks.",
+                    "Ligado: o W-Tap só reage aos golpes do clique automático. Desligado: também reage aos seus cliques esquerdos manuais."))) { g_wtapOnlyAuto.store(wo); saveConfig(); }
     ImGui::Dummy(ImVec2(0, 8));
 }
 
@@ -1076,12 +1286,22 @@ static void pageSounds() {
 static void pageBinds() {
     ImGui::TextColored(kMuted, "%s", L("Click a button, then press the key (or mouse button) you want.",
                                        "Clique em um botão e aperte a tecla (ou botão do mouse) que quiser."));
+    ImGui::TextColored(kMuted, "%s", L("Esc clears the bind. With no key pressed for 10 seconds, it is cancelled.",
+                                       "Esc deixa o bind vazio. Sem apertar nenhuma tecla por 10 segundos, ele é cancelado."));
     ImGui::Dummy(ImVec2(0, 4));
-    bindRow("bl", L("Left clicker (arm / disarm)", "Clicker esquerdo (armar / desarmar)"), &g_left.armKey);
-    bindRow("br", L("Right clicker (arm / disarm)", "Clicker direito (armar / desarmar)"), &g_right.armKey);
-    bindRow("bt", "Throwpot", &g_throwKey);
+    bindRow("bl", L("Left clicker (arm / disarm)", "Clicker esquerdo (armar / desarmar)"), &g_left.armKey,
+            L("The key that turns the left auto clicker on and off. It works even while a game is in focus.",
+              "A tecla que liga e desliga o clique automático esquerdo. Funciona mesmo com um jogo em foco."));
+    bindRow("br", L("Right clicker (arm / disarm)", "Clicker direito (armar / desarmar)"), &g_right.armKey,
+            L("The key that turns the right auto clicker on and off.",
+              "A tecla que liga e desliga o clique automático direito."));
+    bindRow("bt", "Throwpot", &g_throwKey,
+            L("The key that runs the Throwpot macro (switch to the potion slot, throw, return). Empty means off.",
+              "A tecla que executa a macro Throwpot (troca para o slot da poção, arremessa, volta). Vazio significa desligada."));
     ImGui::Dummy(ImVec2(0, 6));
-    if (pillButton(L("Fetch Minecraft binds", "Ler binds do Minecraft"))) {
+    if (pillButton(L("Fetch Minecraft binds", "Ler binds do Minecraft"), 0.0f,
+                   L("Reads your hotbar keys from Minecraft's options.txt, so slot detection matches your own key binds. Read-only: nothing is changed in the game.",
+                     "Lê as teclas da sua hotbar no options.txt do Minecraft, para a detecção de slot bater com as suas teclas. Somente leitura: nada é alterado no jogo."))) {
         s_bindsMsg = fetchMinecraftBinds() ? L("Binds loaded from Minecraft.", "Binds lidos do Minecraft.")
                                            : L("options.txt not found (or default binds).", "options.txt não encontrado (ou binds padrão).");
         saveConfig();
@@ -1119,22 +1339,45 @@ static void pageThemes() {
     if (ImGui::ColorEdit3("##custom", g_accent, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_PickerHueBar)) saveConfig();
     ImGui::Dummy(ImVec2(0, 4));
     bool rb = g_rainbow.load();
-    if (toggleRow("rb", "Rainbow", &rb)) { g_rainbow.store(rb); saveConfig(); }
+    if (toggleRow("rb", "Rainbow", &rb, nullptr,
+                  L("Slowly cycles the accent color through every color of the rainbow.",
+                    "Faz a cor de destaque percorrer lentamente todas as cores do arco-íris."))) { g_rainbow.store(rb); saveConfig(); }
     ImGui::Dummy(ImVec2(0, 8));
 }
 
 static void pageSettings() {
     ImGui::TextColored(kMuted, "%s", L("Language", "Idioma"));
     int lg = g_lang;
-    if (segmented("lang", "English", "Português", &lg, 300.0f)) { g_lang = lg; saveConfig(); }
+    if (segmented("lang", "English", "Português", &lg, 300.0f,
+                  L("Changes the language of the whole interface.", "Muda o idioma de toda a interface."))) { g_lang = lg; saveConfig(); }
     ImGui::Dummy(ImVec2(0, 4));
+
+    // modo de ativacao do clique (fica aqui, escondido nas configuracoes)
+    sectionTitle(L("ACTIVATION MODE", "MODO DE ATIVAÇÃO"),
+                 L("How the auto clicker starts clicking after you arm it with its hotkey.",
+                   "Como o clique automático começa a clicar depois que você o arma com a tecla dele."));
+    int mode = g_clickMode.load();
+    if (segmented("mode", L("Hold the button", "Segurar o botão"), L("Press once", "Apertar uma vez"), &mode, 360.0f,
+                  L("Hold the button (default): it clicks only while you hold the mouse button. Press once: pressing the hotkey starts continuous clicking and pressing it again stops it, like a classic autoclicker.",
+                    "Segurar o botão (padrão): ele só clica enquanto você segura o botão do mouse. Apertar uma vez: apertar a tecla começa o clique contínuo e apertar de novo para, como um autoclicker comum."))) { g_clickMode.store(mode); saveConfig(); }
+    ImGui::TextColored(kMuted, "%s", mode == 1
+        ? L("Press the hotkey once to click non-stop; press it again to stop.",
+            "Aperte a tecla uma vez para clicar sem parar; aperte de novo para parar.")
+        : L("Arm with the hotkey, then hold the mouse button to click.",
+            "Arme com a tecla e segure o botão do mouse para clicar."));
+    ImGui::Dummy(ImVec2(0, 6));
+
     bool pin = g_pinned;
-    if (toggleRow("pin", L("Always on top", "Sempre no topo"), &pin)) {
+    if (toggleRow("pin", L("Always on top", "Sempre no topo"), &pin, nullptr,
+                  L("Keeps the GNClicker window above all other windows.",
+                    "Mantém a janela do GNClicker acima de todas as outras."))) {
         g_pinned = pin;
         ::SetWindowPos(g_hwnd, pin ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     ImGui::Dummy(ImVec2(0, 6));
-    if (pillButton(L("Reset settings", "Restaurar padrões"))) resetDefaults();
+    if (pillButton(L("Reset settings", "Restaurar padrões"), 0.0f,
+                   L("Restores every setting to its default value.",
+                     "Restaura todas as configurações para os valores padrão."))) resetDefaults();
 
     ImGui::Dummy(ImVec2(0, 14));
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -1144,7 +1387,7 @@ static void pageSettings() {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u32(mix(col(0.075f,0.055f,0.065f,1), acc, 0.06f)), 16.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), u32(alpha(acc, 0.30f)), 16.0f);
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(p.x + 16, p.y + 16), ImVec2(p.x + 76, p.y + 76));
-    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "GNClicker 1.0.2");
+    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "GNClicker 1.0.3");
     dl->AddText(ImVec2(p.x + 92, p.y + 40), u32(kMuted), L("Made in Brazil by Gazake", "Feito no Brasil por Gazake"));
     dl->AddText(ImVec2(p.x + 92, p.y + 62), u32(kMuted), L("MIT License. Interface: Dear ImGui (MIT).", "Licença MIT. Interface: Dear ImGui (MIT)."));
     dl->AddText(ImVec2(p.x + 92, p.y + 82), u32(alpha(kMuted, 0.8f)), L("No network, no persistence, no trace wiping.", "Sem rede, sem persistência, sem apagar rastros."));
@@ -1186,7 +1429,7 @@ static void drawUI() {
     struct Dot { float x; ImU32 c; const char* tip; };
     Dot dots[3] = { { 24, IM_COL32(255,95,87,255),  L("Close", "Fechar") },
                     { 46, IM_COL32(254,188,46,255), L("Minimize", "Minimizar") },
-                    { 68, IM_COL32(40,200,64,255),  L("Always on top", "Sempre no topo") } };
+                    { 68, IM_COL32(40,200,64,255),  L("Hide to tray (keeps clicking in the background)", "Esconder na bandeja (continua funcionando)") } };
     for (int i = 0; i < 3; ++i) {
         ImVec2 c(o.x + dots[i].x, o.y + kTitleH * 0.5f);
         ImGui::SetCursorScreenPos(ImVec2(c.x - 9, c.y - 9));
@@ -1194,12 +1437,11 @@ static void drawUI() {
         if (ImGui::InvisibleButton("##dot", ImVec2(18, 18))) {
             if (i == 0) ::PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
             if (i == 1) ::ShowWindow(g_hwnd, SW_MINIMIZE);
-            if (i == 2) { g_pinned = !g_pinned; ::SetWindowPos(g_hwnd, g_pinned ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+            if (i == 2) ::PostMessageW(g_hwnd, WM_HIDE_TO_TRAY, 0, 0);   // bolinha verde: esconde na bandeja do sistema
         }
         bool hv = ImGui::IsItemHovered();
         if (hv) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); ImGui::SetTooltip("%s", dots[i].tip); }
         dl->AddCircleFilled(c, hv ? 7.5f : 6.5f, dots[i].c);
-        if (i == 2 && g_pinned) dl->AddCircle(c, 9.5f, IM_COL32(255,255,255,200), 0, 1.5f);
         ImGui::PopID();
     }
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(o.x + 92, o.y + 9), ImVec2(o.x + 92 + 28, o.y + 9 + 28));
@@ -1238,6 +1480,16 @@ static void drawUI() {
 // =============================================================================
 int main(int, char**) {
     timeBeginPeriod(1);   // timer de 1 ms: ritmo de clique e som regulares (o padrao e ~15 ms)
+    {   // Windows 10/11: pede para NAO limitar o timer/CPU deste processo quando a janela esta em segundo plano
+        struct PowerThrottling { ULONG Version; ULONG ControlMask; ULONG StateMask; };
+        typedef BOOL (WINAPI *SetProcInfoFn)(HANDLE, int, LPVOID, DWORD);
+        HMODULE k32 = ::GetModuleHandleW(L"kernel32.dll");
+        SetProcInfoFn setInfo = k32 ? reinterpret_cast<SetProcInfoFn>(reinterpret_cast<void*>(::GetProcAddress(k32, "SetProcessInformation"))) : nullptr;
+        if (setInfo) {
+            PowerThrottling st = { 1, 0x1 /*EXECUTION_SPEED*/ | 0x4 /*IGNORE_TIMER_RESOLUTION*/, 0 /*0 = nao limitar*/ };
+            setInfo(::GetCurrentProcess(), 4 /*ProcessPowerThrottling*/, &st, sizeof(st));
+        }
+    }
     initClickers();
     loadCustomSounds();   // le .wav da pasta "sounds"
     buildSoundList();     // monta a lista (embutidos + custom)
@@ -1301,6 +1553,7 @@ int main(int, char**) {
     std::thread tHK(hotkeyWorker);
     std::thread tThrow(throwWorker);
     std::thread tWtap(wtapWorker);
+    std::thread tMc(mcDetectWorker);
     std::thread tHook(mouseHookThread);
 
     const ImVec4 clear_color = ImVec4(0.0f, 0.0f, 0.0f, 1.00f);
@@ -1351,6 +1604,7 @@ int main(int, char**) {
     if (tHK.joinable()) tHK.join();
     if (tThrow.joinable()) tThrow.join();
     if (tWtap.joinable()) tWtap.join();
+    if (tMc.joinable()) tMc.join();
     // acorda a thread do hook (GetMessage) para ela encerrar e desinstalar o hook
     if (g_hookThreadId.load()) ::PostThreadMessageW((DWORD)g_hookThreadId.load(), WM_QUIT, 0, 0);
     if (tHook.joinable()) tHook.join();
@@ -1437,10 +1691,65 @@ void CreateLogoTexture() {
     }
 }
 
+// ---- icone na bandeja do sistema (bolinha verde esconde a janela, o clicker continua rodando) ----
+static bool g_trayActive = false;
+
+static void trayAdd() {
+    if (g_trayActive) return;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAYICON;
+    nid.hIcon = (HICON)::LoadImageW(::GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                    ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON), LR_SHARED);
+    wcsncpy(nid.szTip, L"GNClicker", 63);
+    g_trayActive = ::Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
+}
+static void trayRemove() {
+    if (!g_trayActive) return;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = 1;
+    ::Shell_NotifyIconW(NIM_DELETE, &nid);
+    g_trayActive = false;
+}
+static void hideToTray() {
+    trayAdd();
+    if (g_trayActive) ::ShowWindow(g_hwnd, SW_HIDE);   // so esconde se o icone da bandeja existe (senao o usuario perderia a janela)
+}
+static void showFromTray() {
+    ::ShowWindow(g_hwnd, SW_SHOW);
+    ::ShowWindow(g_hwnd, SW_RESTORE);
+    ::SetForegroundWindow(g_hwnd);
+    trayRemove();
+}
+
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
         return true;
     switch (msg) {
+    case WM_HIDE_TO_TRAY:
+        hideToTray();
+        return 0;
+    case WM_TRAYICON:
+        if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK) {
+            showFromTray();
+        } else if (lParam == WM_RBUTTONUP) {
+            POINT pt; ::GetCursorPos(&pt);
+            HMENU menu = ::CreatePopupMenu();
+            ::AppendMenuW(menu, MF_STRING, ID_TRAY_SHOW, g_lang == 1 ? L"Mostrar GNClicker" : L"Show GNClicker");
+            ::AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, g_lang == 1 ? L"Sair" : L"Exit");
+            ::SetForegroundWindow(hWnd);
+            int cmd = (int)::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, nullptr);
+            ::DestroyMenu(menu);
+            ::PostMessageW(hWnd, WM_NULL, 0, 0);
+            if (cmd == ID_TRAY_SHOW) showFromTray();
+            if (cmd == ID_TRAY_EXIT) ::PostMessageW(hWnd, WM_CLOSE, 0, 0);
+        }
+        return 0;
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED) return 0;
         g_ResizeWidth  = (UINT)LOWORD(lParam);
@@ -1460,6 +1769,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if ((wParam & 0xfff0) == SC_KEYMENU) return 0; // desabilita ALT menu
         break;
     case WM_DESTROY:
+        trayRemove();
         ::PostQuitMessage(0);
         return 0;
     }
