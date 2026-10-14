@@ -366,9 +366,35 @@ static void tapKey(int vk, int holdMs = 15) {
     sendKey(vk, true);
 }
 
+// O cursor esta realmente visivel? Jogos como o Minecraft (LWJGL) nao escondem o mouse de verdade: eles
+// trocam por um cursor 100% transparente, e o Windows continua dizendo que o cursor esta "visivel".
+// Por isso, alem da flag, olhamos se a imagem do cursor atual e totalmente em branco.
 static bool cursorVisible() {
     CURSORINFO ci = { sizeof(ci) };
-    return GetCursorInfo(&ci) && (ci.flags & CURSOR_SHOWING);
+    if (!GetCursorInfo(&ci) || !(ci.flags & CURSOR_SHOWING) || !ci.hCursor) return false;
+    thread_local HCURSOR lastCur = nullptr;      // cache por thread: so reanalisa quando o cursor muda
+    thread_local bool lastVisible = true;
+    if (ci.hCursor == lastCur) return lastVisible;
+    bool visible = true;
+    ICONINFO ii;
+    if (GetIconInfo(ci.hCursor, &ii)) {
+        if (ii.hbmColor) {
+            BITMAP bm = {};
+            if (GetObject(ii.hbmColor, sizeof(bm), &bm) && bm.bmBitsPixel == 32 && bm.bmWidth > 0 && bm.bmHeight > 0 &&
+                (long long)bm.bmWidth * bm.bmHeight <= 256LL * 256LL) {
+                std::vector<unsigned char> px((size_t)bm.bmWidthBytes * (size_t)bm.bmHeight);
+                if (GetBitmapBits(ii.hbmColor, (LONG)px.size(), px.data()) == (LONG)px.size()) {
+                    bool allZero = true;
+                    for (unsigned char b : px) if (b) { allZero = false; break; }
+                    if (allZero) visible = false;          // cursor transparente = escondido
+                }
+            }
+        }
+        if (ii.hbmMask)  DeleteObject(ii.hbmMask);
+        if (ii.hbmColor) DeleteObject(ii.hbmColor);
+    }
+    lastCur = ci.hCursor; lastVisible = visible;
+    return visible;
 }
 
 static bool windowOk() {
@@ -1387,7 +1413,7 @@ static void pageSettings() {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u32(mix(col(0.075f,0.055f,0.065f,1), acc, 0.06f)), 16.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), u32(alpha(acc, 0.30f)), 16.0f);
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(p.x + 16, p.y + 16), ImVec2(p.x + 76, p.y + 76));
-    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "GNClicker 1.0.3");
+    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "GNClicker 1.0.4");
     dl->AddText(ImVec2(p.x + 92, p.y + 40), u32(kMuted), L("Made in Brazil by Gazake", "Feito no Brasil por Gazake"));
     dl->AddText(ImVec2(p.x + 92, p.y + 62), u32(kMuted), L("MIT License. Interface: Dear ImGui (MIT).", "Licença MIT. Interface: Dear ImGui (MIT)."));
     dl->AddText(ImVec2(p.x + 92, p.y + 82), u32(alpha(kMuted, 0.8f)), L("No network, no persistence, no trace wiping.", "Sem rede, sem persistência, sem apagar rastros."));

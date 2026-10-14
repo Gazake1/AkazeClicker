@@ -4,8 +4,8 @@
 1 ICON "GNClicker.ico"
 
 1 VERSIONINFO
- FILEVERSION 1,0,3,0
- PRODUCTVERSION 1,0,3,0
+ FILEVERSION 1,0,4,0
+ PRODUCTVERSION 1,0,4,0
  FILEFLAGSMASK 0x3fL
  FILEFLAGS 0x0L
  FILEOS 0x40004L
@@ -18,12 +18,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Gazake"
             VALUE "FileDescription", "GNClicker - autoclicker for Minecraft"
-            VALUE "FileVersion", "1.0.3.0"
+            VALUE "FileVersion", "1.0.4.0"
             VALUE "InternalName", "GNClicker"
             VALUE "LegalCopyright", "Copyright (c) 2026 Gazake. MIT License."
             VALUE "OriginalFilename", "GNClicker.exe"
             VALUE "ProductName", "GNClicker"
-            VALUE "ProductVersion", "1.0.3"
+            VALUE "ProductVersion", "1.0.4"
         END
     END
     BLOCK "VarFileInfo"
