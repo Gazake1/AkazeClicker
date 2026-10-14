@@ -1,0 +1,43 @@
+===========================================
+  GNClicker - autoclicker
+===========================================
+
+QUAL ARQUIVO ABRIR?
+-------------------
+- GNClicker.exe        -> use este primeiro (abertura normal).
+- GNClicker-Admin.exe  -> use SE os cliques nao funcionarem dentro do jogo.
+                          Abre como administrador (vai aparecer o aviso do
+                          Windows pedindo permissao - clique em "Sim").
+                          Necessario quando o jogo roda como administrador.
+
+COMO USAR
+---------
+1. Abra o GNClicker.exe (nao precisa instalar nada).
+2. Em cada lado (ESQUERDO / DIREITO), escolha a tecla para ATIVAR
+   (clique no botao "Tecla para ativar" e aperte a tecla que quiser).
+   - Pode usar a mesma tecla nos dois, ou uma tecla pra cada.
+3. Ajuste o CPS (cliques por segundo) digitando o numero (ate 100).
+4. No jogo: aperte a tecla de ativar -> fica ARMADO.
+   - Segure o botao ESQUERDO do mouse -> clica sozinho (CPS esquerdo).
+   - Segure o botao DIREITO do mouse  -> clica sozinho (CPS direito).
+   - Aperte a tecla de novo -> DESATIVADO.
+5. "Som do clique": escolha um som ou Nenhum. Toca a cada clique (com previa).
+   - Ja vem com sons embutidos: Default, GPro, G303, G303 V2, G502, HP,
+     Microsoft, Old, e tambem Click / Tick / Pop / Mouse.
+   - Quer usar outros sons? Coloque arquivos .wav (ate 5 MB) na pasta "sounds"
+     ao lado do programa: eles aparecem no menu automaticamente, pelo nome.
+6. Dá pra trocar a cor do tema na parte de baixo.
+
+Suas configuracoes (teclas, CPS, cor) ficam salvas e voltam ao reabrir.
+
+AVISO DO ANTIVIRUS
+------------------
+Alguns antivirus marcam QUALQUER autoclicker como "PUA" / "HackTool".
+Isso NAO e virus - e so a categoria "automacao de jogo" sendo sinalizada.
+Se o Windows Defender bloquear ao abrir:
+  -> clique em "Mais informacoes" e depois "Executar assim mesmo".
+
+OBS: usar autoclicker pode violar as regras de alguns servidores de
+jogo. Use por sua conta e risco.
+
+Feito com carinho :)

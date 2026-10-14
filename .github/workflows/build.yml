@@ -1,0 +1,106 @@
+name: build
+
+# Compila o GNClicker a partir do codigo deste repositorio.
+# - push/PR: compila e guarda os executaveis como artefato.
+# - tag v*:  compila e publica uma Release com os executaveis e o SHA-256 de cada um.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MinGW-w64 (MSYS2 UCRT64)
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Build
+        shell: cmd
+        run: |
+          set "PATH=${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin;%PATH%"
+          call build.bat
+
+      - name: SHA-256
+        shell: pwsh
+        run: |
+          Get-FileHash GNClicker.exe, GNClicker-Admin.exe -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - name: Upload artifact (unsigned)
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: GNClicker-unsigned
+          path: |
+            GNClicker.exe
+            GNClicker-Admin.exe
+            SHA256SUMS.txt
+
+      # ----------------------------------------------------------------------
+      # Assinatura de codigo (SignPath Foundation). Fica DESLIGADA ate o pedido ser
+      # aprovado. Depois: crie o secret SIGNPATH_API_TOKEN, preencha os ids e remova o "if: false".
+      # ----------------------------------------------------------------------
+      # - name: Submit signing request (SignPath)
+      #   if: startsWith(github.ref, 'refs/tags/v')
+      #   uses: signpath/github-action-submit-signing-request@v1
+      #   with:
+      #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #     organization-id: "<ORGANIZATION_ID>"
+      #     project-slug: "GNClicker"
+      #     signing-policy-slug: "release-signing"
+      #     github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      #     wait-for-completion: true
+      #     output-artifact-directory: signed
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: GNClicker-unsigned
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "## GNClicker ${GITHUB_REF_NAME}"
+            echo
+            echo "Built by GitHub Actions from this repository."
+            echo
+            echo "| File | When to use |"
+            echo "|---|---|"
+            echo "| \`GNClicker.exe\` | Standard version |"
+            echo "| \`GNClicker-Admin.exe\` | When your game or launcher runs as administrator (asks for UAC) |"
+            echo
+            echo "### SHA-256"
+            echo '```'
+            cat SHA256SUMS.txt
+            echo '```'
+            echo
+            echo "> Windows SmartScreen may show \"unknown publisher\" for new unsigned programs: click **More info, Run anyway**."
+            echo "> Some antivirus programs flag every autoclicker as PUA/HackTool, even without malware."
+          } > notes.md
+          gh release create "${GITHUB_REF_NAME}" GNClicker.exe GNClicker-Admin.exe SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}" --title "GNClicker ${GITHUB_REF_NAME}" --notes-file notes.md

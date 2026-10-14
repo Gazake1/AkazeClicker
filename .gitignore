@@ -1,0 +1,12 @@
+# Dear ImGui: biblioteca de terceiros, baixada pelo build.bat (git clone)
+imgui/
+
+# Artefatos de build (os .exe vao como Release no GitHub, nao no historico)
+*.o
+*.exe
+GNClicker_new.exe
+GNClicker-Admin_new.exe
+
+# Config de runtime
+imgui.ini
+build/

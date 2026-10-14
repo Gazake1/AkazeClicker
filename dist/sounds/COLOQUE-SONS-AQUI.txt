@@ -1,0 +1,7 @@
+﻿Coloque aqui arquivos de som .wav (ex: packs de som de mouse: GPro.wav, G502.wav, etc).
+Eles vao aparecer AUTOMATICAMENTE no menu "Som do clique" do GNClicker, pelo nome do arquivo.
+
+- Formato: .wav (PCM). Curto (um clique).
+- Sem precisar de nada: e so soltar os .wav nesta pasta e abrir o GNClicker.
+
+Os sons que ja vem embutidos (Click, Tick, Pop, Mouse) nao precisam de arquivo.
