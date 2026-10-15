@@ -18,12 +18,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Gazake"
             VALUE "FileDescription", "Akaze - autoclicker for Minecraft"
-            VALUE "FileVersion", "1.1.0.0"
+            VALUE "FileVersion", "1.1.1.0"
             VALUE "InternalName", "Akaze"
             VALUE "LegalCopyright", "Copyright (c) 2026 Gazake. MIT License."
             VALUE "OriginalFilename", "Akaze.exe"
             VALUE "ProductName", "Akaze"
-            VALUE "ProductVersion", "1.1.0"
+            VALUE "ProductVersion", "1.1.1"
         END
     END
     BLOCK "VarFileInfo"

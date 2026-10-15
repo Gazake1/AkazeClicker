@@ -17,7 +17,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install MinGW-w64 (MSYS2 UCRT64)
         id: msys2
@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload artifact (unsigned)
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Akaze-unsigned
           path: |
@@ -74,9 +74,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: Akaze-unsigned
 

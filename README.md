@@ -34,7 +34,7 @@ It was designed for Minecraft, but the core works in any window.
 |---|---|
 | **Left / Right** | Each side has its own hotkey and CPS (1–100) |
 | **Inventory** | Click with the cursor visible (off = in-game only) |
-| **Blockhit** | While right click is held, releases the block only during the hit |
+| **Blockhit** | *Coming soon* (temporarily unavailable) |
 | **Jitter + Speed** | Tiny mouse movements on every left click, undone on the next one (up to 15 px). Works **only while Minecraft, or a known Minecraft launcher/client, is the active window**; auto click itself works everywhere. Left click only |
 | **Target window only** | Acts only while the captured window is in focus |
 | **Hover tips** | Rest the mouse on a function name for ~3 seconds to see what it does |
@@ -79,7 +79,7 @@ Files it touches: its own `config.txt` in `%APPDATA%\Akaze` and a `sounds` folde
 (created on first run, read-only use); it also reads `%APPDATA%\.minecraft\options.txt` when you press *Fetch Binds*.
 
 > [!WARNING]
-> Some antivirus programs flag every autoclicker as PUA/HackTool, even without malware. Blockhit, jitter, throwpot and
+> Some antivirus programs flag every autoclicker as PUA/HackTool, even without malware. Jitter, throwpot and
 > W-tap are easier for anti-cheats to detect, and many Minecraft servers forbid autoclickers. Use it at your own risk and
 > check your server's rules.
 

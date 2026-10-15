@@ -487,7 +487,7 @@ static void clickWorker(Clicker* c) {
             // Ciclo do clique: segura metade do intervalo, solta,
             // espera a outra metade e SO ENTAO toca o som (som no fim do clique).
             // blockhit: solta o RMB so durante o golpe e volta a bloquear logo depois
-            bool bh = c->left && g_blockhit.load() && g_physRight.load();
+            bool bh = false;   // Blockhit indisponivel por enquanto (g_blockhit nunca e ligado)
             if (bh) mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0);
             mouse_event(c->left ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0);
             preciseSleepUs(halfUs);
@@ -728,7 +728,7 @@ static void loadConfig() {
         else if (k == "accB")    g_accent[2] = (float)atof(v.c_str());
         else if (k == "soundName") setSoundByName(v);
         else if (k == "inventory")   g_inventory.store(atoi(v.c_str()) != 0);
-        else if (k == "blockhit")    g_blockhit.store(atoi(v.c_str()) != 0);
+        else if (k == "blockhit")    { /* indisponivel por enquanto: ignora o valor salvo */ }
         else if (k == "jitter")      g_jitter.store(atoi(v.c_str()) != 0);
         else if (k == "jitterSpeed") { int iv=atoi(v.c_str()); g_jitterSpeed.store(iv<1?1:(iv>15?15:iv)); }
         else if (k == "slotFilter")  g_slotFilter.store(atoi(v.c_str()) != 0);
@@ -892,6 +892,26 @@ static bool toggleRow(const char* id, const char* label, bool* v, const char* hi
     dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + w, p.y + h), u32(col(1,1,1,0.06f)));
     ImGui::PopID();
     return changed;
+}
+
+// Linha de funcao indisponivel: mesma aparencia do toggleRow, apagada e sem clique.
+static void disabledRow(const char* id, const char* label, const char* hint, const char* tip) {
+    ImGui::PushID(id);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x, h = 46.0f;
+    ImGui::InvisibleButton("##row", ImVec2(w, h));
+    hoverTip(tip);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 ts = ImGui::CalcTextSize(label);
+    float ty = p.y + (h - ts.y) * 0.5f;
+    dl->AddText(ImVec2(p.x, ty), u32(col(0.55f,0.55f,0.60f,1)), label);
+    if (hint) dl->AddText(ImVec2(p.x + ts.x + 10.0f, ty), u32(col(0.40f,0.40f,0.45f,1)), hint);
+    const float sw = 48.0f, sh = 26.0f;
+    ImVec2 s0(p.x + w - sw, p.y + (h - sh) * 0.5f);
+    dl->AddRectFilled(s0, ImVec2(s0.x + sw, s0.y + sh), u32(col(0.12f,0.12f,0.14f,1)), sh * 0.5f);
+    dl->AddCircleFilled(ImVec2(s0.x + sh * 0.5f, s0.y + sh * 0.5f), sh * 0.5f - 3.5f, IM_COL32(110,110,118,255));
+    dl->AddLine(ImVec2(p.x, p.y + h), ImVec2(p.x + w, p.y + h), u32(col(1,1,1,0.06f)));
+    ImGui::PopID();
 }
 
 // Slider fino com preenchimento na cor do tema e botao redondo.
@@ -1157,10 +1177,9 @@ static void pageClicker() {
                              L("How far the mouse moves on each click, in pixels (1 to 15). Lower is subtler.",
                                "Quanto o mouse se move a cada clique, em pixels (1 a 15). Menor é mais discreto."))) { g_jitterSpeed.store(sp); saveConfig(); }
         }
-        bool bh = g_blockhit.load();
-        if (toggleRow("bh", "Blockhit", &bh, L("(hold right click)", "(segure o botão direito)"),
-                      L("Minecraft PvP: lets you keep blocking with a sword while you hit. While you hold the right mouse button, each automatic left click briefly releases the block and then blocks again. Left click only.",
-                        "PvP do Minecraft: deixa você continuar bloqueando com a espada enquanto bate. Enquanto você segura o botão direito do mouse, cada clique esquerdo automático solta o bloqueio por um instante e bloqueia de novo. Só no clique esquerdo."))) { g_blockhit.store(bh); saveConfig(); }
+        disabledRow("bh", "Blockhit", L("(coming soon)", "(em breve)"),
+                    L("Blockhit is temporarily unavailable and will come back in a future update.",
+                      "O Blockhit está indisponível por enquanto e volta em uma atualização futura."));
     }
     bool inv = g_inventory.load();
     if (toggleRow("inv", "Inventory", &inv, L("(click with the cursor visible)", "(clicar com o cursor visível)"),
@@ -1417,7 +1436,7 @@ static void pageSettings() {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u32(mix(col(0.075f,0.055f,0.065f,1), acc, 0.06f)), 16.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), u32(alpha(acc, 0.30f)), 16.0f);
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(p.x + 16, p.y + 16), ImVec2(p.x + 76, p.y + 76));
-    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.1.0");
+    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.1.1");
     dl->AddText(ImVec2(p.x + 92, p.y + 40), u32(kMuted), L("Made in Brazil by Gazake", "Feito no Brasil por Gazake"));
     dl->AddText(ImVec2(p.x + 92, p.y + 62), u32(kMuted), L("MIT License. Interface: Dear ImGui (MIT).", "Licença MIT. Interface: Dear ImGui (MIT)."));
     dl->AddText(ImVec2(p.x + 92, p.y + 82), u32(alpha(kMuted, 0.8f)), L("No network, no persistence, no trace wiping.", "Sem rede, sem persistência, sem apagar rastros."));
