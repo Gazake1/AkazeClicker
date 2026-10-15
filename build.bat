@@ -1,9 +1,9 @@
 @echo off
 REM ============================================================================
-REM  build.bat - compila o GNClicker com MinGW-w64 (g++)
+REM  build.bat - compila o Akaze com MinGW-w64 (g++)
 REM  Requisitos: git + g++/windres/strip no PATH
 REM              (ex: winget install BrechtSanders.WinLibs.POSIX.UCRT)
-REM  Saida: GNClicker.exe e GNClicker-Admin.exe (mesmo programa, com manifesto de admin)
+REM  Saida: Akaze.exe e Akaze-Admin.exe (mesmo programa, com manifesto de admin)
 REM  O Dear ImGui e baixado em uma versao FIXA (commit abaixo) para o build ser reproduzivel.
 REM ============================================================================
 setlocal
@@ -40,7 +40,7 @@ g++ -std=c++17 -O2 -DNDEBUG -Wall -Wno-misleading-indentation ^
   imgui\imgui.cpp imgui\imgui_draw.cpp imgui\imgui_tables.cpp imgui\imgui_widgets.cpp ^
   imgui\backends\imgui_impl_dx11.cpp imgui\backends\imgui_impl_win32.cpp ^
   app.res.o ^
-  -o GNClicker.exe ^
+  -o Akaze.exe ^
   -mwindows -static -static-libgcc -static-libstdc++ ^
   -ld3d11 -ldxgi -ld3dcompiler -lgdi32 -luser32 -limm32 -ldwmapi -lwinmm
 if errorlevel 1 (
@@ -48,19 +48,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
-strip --strip-all GNClicker.exe
+strip --strip-all Akaze.exe
 if errorlevel 1 (
   echo [ERRO] Falha ao remover os simbolos de depuracao.
   exit /b 1
 )
 
 echo [*] Gerando a versao Admin...
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-admin.ps1 -Source GNClicker.exe -Dest GNClicker-Admin.exe -Manifest gnclicker.manifest
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\make-admin.ps1 -Source Akaze.exe -Dest Akaze-Admin.exe -Manifest akaze.manifest
 if errorlevel 1 (
-  echo [ERRO] Falha ao gerar o GNClicker-Admin.exe.
+  echo [ERRO] Falha ao gerar o Akaze-Admin.exe.
   exit /b 1
 )
 
 echo.
-echo [OK] Gerados: GNClicker.exe e GNClicker-Admin.exe
+echo [OK] Gerados: Akaze.exe e Akaze-Admin.exe
 endlocal

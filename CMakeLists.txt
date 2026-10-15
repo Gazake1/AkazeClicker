@@ -5,13 +5,13 @@
 #  Passos (no diretorio do projeto):
 #    cmake -S . -B build
 #    cmake --build build --config Release
-#  Saida: build/Release/GNClicker.exe  (ou build/GNClicker.exe no MinGW)
+#  Saida: build/Release/Akaze.exe  (ou build/Akaze.exe no MinGW)
 #
-#  Obs: este CMake gera so o GNClicker.exe normal. A versao Admin e criada pelo
+#  Obs: este CMake gera so o Akaze.exe normal. A versao Admin e criada pelo
 #  tools/make-admin.ps1 (troca o manifesto do exe).
 # ============================================================================
 cmake_minimum_required(VERSION 3.14)
-project(GNClicker LANGUAGES CXX RC)
+project(Akaze LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,7 +24,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
-add_executable(GNClicker WIN32
+add_executable(Akaze WIN32
   main.cpp
   app.rc
   ${imgui_SOURCE_DIR}/imgui.cpp
@@ -35,16 +35,16 @@ add_executable(GNClicker WIN32
   ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
 )
 
-target_include_directories(GNClicker PRIVATE
+target_include_directories(Akaze PRIVATE
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends
 )
 
-target_link_libraries(GNClicker PRIVATE
+target_link_libraries(Akaze PRIVATE
   d3d11 dxgi d3dcompiler gdi32 user32 imm32 dwmapi winmm
 )
 
 # MinGW: linkar runtime estatico para o exe rodar sem DLLs extras
 if(MINGW)
-  target_link_options(GNClicker PRIVATE -static -static-libgcc -static-libstdc++)
+  target_link_options(Akaze PRIVATE -static -static-libgcc -static-libstdc++)
 endif()

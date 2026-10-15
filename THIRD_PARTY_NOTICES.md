@@ -1,6 +1,6 @@
 # Third-party notices
 
-GNClicker is released under the [MIT License](LICENSE). It includes or uses the following third-party material.
+Akaze is released under the [MIT License](LICENSE). It includes or uses the following third-party material.
 
 ## Dear ImGui
 

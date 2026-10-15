@@ -1,18 +1,18 @@
 ===========================================
-  GNClicker - autoclicker
+  Akaze - autoclicker
 ===========================================
 
 QUAL ARQUIVO ABRIR?
 -------------------
-- GNClicker.exe        -> use este primeiro (abertura normal).
-- GNClicker-Admin.exe  -> use SE os cliques nao funcionarem dentro do jogo.
+- Akaze.exe        -> use este primeiro (abertura normal).
+- Akaze-Admin.exe  -> use SE os cliques nao funcionarem dentro do jogo.
                           Abre como administrador (vai aparecer o aviso do
                           Windows pedindo permissao - clique em "Sim").
                           Necessario quando o jogo roda como administrador.
 
 COMO USAR
 ---------
-1. Abra o GNClicker.exe (nao precisa instalar nada).
+1. Abra o Akaze.exe (nao precisa instalar nada).
 2. Em cada lado (ESQUERDO / DIREITO), escolha a tecla para ATIVAR
    (clique no botao "Tecla para ativar" e aperte a tecla que quiser).
    - Pode usar a mesma tecla nos dois, ou uma tecla pra cada.

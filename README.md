@@ -1,23 +1,23 @@
 <div align="center">
 
-# GNClicker
+# Akaze
 
 **A small, fast and transparent autoclicker for Minecraft on Windows.**
 Made in Brazil 🇧🇷 by [Gazake](https://github.com/Gazake1).
 
-[![build](https://github.com/Gazake1/GNClicker/actions/workflows/build.yml/badge.svg)](https://github.com/Gazake1/GNClicker/actions/workflows/build.yml)
+[![build](https://github.com/Gazake1/AkazeClicker/actions/workflows/build.yml/badge.svg)](https://github.com/Gazake1/AkazeClicker/actions/workflows/build.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=flat-square&logo=windows)
 ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus)
 ![Network](https://img.shields.io/badge/network-none-2ea44f?style=flat-square)
 
-**[Website & download](https://gazake1.github.io/gnclicker-site/)** · **[Releases](https://github.com/Gazake1/GNClicker/releases)** · [Português](README.pt-BR.md)
+**[Website & download](https://gazake1.github.io/akaze-site/)** · **[Releases](https://github.com/Gazake1/AkazeClicker/releases)** · [Português](README.pt-BR.md)
 
 </div>
 
 <div align="center">
 
-<img src="docs/ui-clicker.png" alt="GNClicker - Clicker page" width="620">
+<img src="docs/ui-clicker.png" alt="Akaze - Clicker page" width="620">
 
 </div>
 
@@ -25,7 +25,7 @@ Made in Brazil 🇧🇷 by [Gazake](https://github.com/Gazake1).
 
 ## What it does
 
-GNClicker presses your mouse button for you, at a speed you choose (1–100 clicks per second), while you hold the
+Akaze presses your mouse button for you, at a speed you choose (1–100 clicks per second), while you hold the
 button. Arm it with a hotkey, hold the mouse button, and it clicks for as long as you hold.
 It was designed for Minecraft, but the core works in any window.
 
@@ -49,12 +49,12 @@ It was designed for Minecraft, but the core works in any window.
 | **W-Tap** | Releases W for a few milliseconds after a hit to reset sprint |
 
 ### Sounds, binds, themes and settings
-Click sounds (8 built-in mouse sounds + 4 synthesized + any `.wav` in the `sounds` folder), key binds, theme colors with a Rainbow mode, and an English / Portuguese language switch. Settings are saved to `%APPDATA%\GNClicker\config.txt`.
+Click sounds (8 built-in mouse sounds + 4 synthesized + any `.wav` in the `sounds` folder), key binds, theme colors with a Rainbow mode, and an English / Portuguese language switch. Settings are saved to `%APPDATA%\Akaze\config.txt`.
 
 ## How it works
 
 1. Press the arm key (default `R`) to arm a side.
-2. Hold the mouse button you want to click with. GNClicker reads the **physical** state of your buttons through a
+2. Hold the mouse button you want to click with. Akaze reads the **physical** state of your buttons through a
    low-level mouse hook that ignores injected clicks, so its own clicks never confuse it.
 3. Each cycle it holds the button for half of the interval, releases, waits the other half and plays the click
    sound, with a natural ±20% timing variation. A 1 ms system timer keeps the rhythm even.
@@ -62,7 +62,7 @@ Click sounds (8 built-in mouse sounds + 4 synthesized + any `.wav` in the `sound
 
 ## Transparency
 
-What GNClicker does **not** do:
+What Akaze does **not** do:
 
 - It does not access the memory of other processes.
 - It does not use the network: nothing is downloaded or sent.
@@ -75,7 +75,7 @@ It only uses standard Windows APIs: `mouse_event` / `SendInput` (clicks and key 
 To know whether Minecraft is in focus (Jitter only), it reads the **title and the program file name of the active window**
 (for example `javaw.exe`), and nothing else about other programs: it never reads their memory. It never clicks while its
 own window is the active one.
-Files it touches: its own `config.txt` in `%APPDATA%\GNClicker` and a `sounds` folder next to the executable
+Files it touches: its own `config.txt` in `%APPDATA%\Akaze` and a `sounds` folder next to the executable
 (created on first run, read-only use); it also reads `%APPDATA%\.minecraft\options.txt` when you press *Fetch Binds*.
 
 > [!WARNING]
@@ -85,13 +85,13 @@ Files it touches: its own `config.txt` in `%APPDATA%\GNClicker` and a `sounds` f
 
 ## Download
 
-Get the executables from **[Releases](https://github.com/Gazake1/GNClicker/releases)**. Each release lists the SHA-256
+Get the executables from **[Releases](https://github.com/Gazake1/AkazeClicker/releases)**. Each release lists the SHA-256
 of every file.
 
 | File | When to use |
 |---|---|
-| `GNClicker.exe` | Standard version |
-| `GNClicker-Admin.exe` | When the game or launcher runs as administrator (asks for UAC) |
+| `Akaze.exe` | Standard version |
+| `Akaze-Admin.exe` | When the game or launcher runs as administrator (asks for UAC) |
 
 Windows SmartScreen may show "unknown publisher" for new, unsigned programs: click **More info → Run anyway**, or
 right-click the file → **Properties → Unblock**.
@@ -104,7 +104,7 @@ build.bat
 ```
 
 `build.bat` downloads Dear ImGui at a **pinned commit** (reproducible builds), compiles with MinGW-w64, strips the
-binary and creates `GNClicker-Admin.exe` with [`tools/make-admin.ps1`](tools/make-admin.ps1). A CMake alternative is in
+binary and creates `Akaze-Admin.exe` with [`tools/make-admin.ps1`](tools/make-admin.ps1). A CMake alternative is in
 [`CMakeLists.txt`](CMakeLists.txt). Releases are built by [GitHub Actions](.github/workflows/build.yml) from this
 repository.
 
@@ -127,12 +127,12 @@ repository.
 ```
 main.cpp                 the whole program (clicker, macros, UI)
 app.rc                   icon + version metadata
-gnclicker.manifest       manifest for the Admin build
+akaze.manifest       manifest for the Admin build
 click_sounds.h           embedded mouse-click sounds
 sounds_data.h            embedded synthesized sounds
 logo_data.h              embedded logo
 build.bat                reproducible build (pinned Dear ImGui)
-tools/make-admin.ps1     creates GNClicker-Admin.exe
+tools/make-admin.ps1     creates Akaze-Admin.exe
 CMakeLists.txt           CMake alternative
 .github/workflows/       CI: build and release
 dist/sounds/             example .wav files

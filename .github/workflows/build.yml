@@ -1,6 +1,6 @@
 name: build
 
-# Compila o GNClicker a partir do codigo deste repositorio.
+# Compila o Akaze a partir do codigo deste repositorio.
 # - push/PR: compila e guarda os executaveis como artefato.
 # - tag v*:  compila e publica uma Release com os executaveis e o SHA-256 de cada um.
 on:
@@ -36,7 +36,7 @@ jobs:
       - name: SHA-256
         shell: pwsh
         run: |
-          Get-FileHash GNClicker.exe, GNClicker-Admin.exe -Algorithm SHA256 |
+          Get-FileHash Akaze.exe, Akaze-Admin.exe -Algorithm SHA256 |
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
             Set-Content SHA256SUMS.txt
           Get-Content SHA256SUMS.txt
@@ -45,10 +45,10 @@ jobs:
         id: upload
         uses: actions/upload-artifact@v4
         with:
-          name: GNClicker-unsigned
+          name: Akaze-unsigned
           path: |
-            GNClicker.exe
-            GNClicker-Admin.exe
+            Akaze.exe
+            Akaze-Admin.exe
             SHA256SUMS.txt
 
       # ----------------------------------------------------------------------
@@ -61,7 +61,7 @@ jobs:
       #   with:
       #     api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
       #     organization-id: "<ORGANIZATION_ID>"
-      #     project-slug: "GNClicker"
+      #     project-slug: "Akaze"
       #     signing-policy-slug: "release-signing"
       #     github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
       #     wait-for-completion: true
@@ -78,21 +78,21 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: GNClicker-unsigned
+          name: Akaze-unsigned
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "## GNClicker ${GITHUB_REF_NAME}"
+            echo "## Akaze ${GITHUB_REF_NAME}"
             echo
             echo "Built by GitHub Actions from this repository."
             echo
             echo "| File | When to use |"
             echo "|---|---|"
-            echo "| \`GNClicker.exe\` | Standard version |"
-            echo "| \`GNClicker-Admin.exe\` | When your game or launcher runs as administrator (asks for UAC) |"
+            echo "| \`Akaze.exe\` | Standard version |"
+            echo "| \`Akaze-Admin.exe\` | When your game or launcher runs as administrator (asks for UAC) |"
             echo
             echo "### SHA-256"
             echo '```'
@@ -102,5 +102,5 @@ jobs:
             echo "> Windows SmartScreen may show \"unknown publisher\" for new unsigned programs: click **More info, Run anyway**."
             echo "> Some antivirus programs flag every autoclicker as PUA/HackTool, even without malware."
           } > notes.md
-          gh release create "${GITHUB_REF_NAME}" GNClicker.exe GNClicker-Admin.exe SHA256SUMS.txt \
-            --repo "${GITHUB_REPOSITORY}" --title "GNClicker ${GITHUB_REF_NAME}" --notes-file notes.md
+          gh release create "${GITHUB_REF_NAME}" Akaze.exe Akaze-Admin.exe SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}" --title "Akaze ${GITHUB_REF_NAME}" --notes-file notes.md

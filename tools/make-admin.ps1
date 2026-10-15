@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
-# Gera o GNClicker-Admin.exe: copia o exe normal e troca SOMENTE o manifesto
-# (RT_MANIFEST, id 1) pelo gnclicker.manifest, que pede privilegios de administrador.
+# Gera o Akaze-Admin.exe: copia o exe normal e troca SOMENTE o manifesto
+# (RT_MANIFEST, id 1) pelo akaze.manifest, que pede privilegios de administrador.
 # O codigo e os demais recursos (icone, metadados de versao) continuam identicos.
 #
 # Por que nao compilar direto com o manifesto? Os runtimes MinGW recentes ja embutem um

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Gazake
 // =============================================================================
-//  GNClicker - autoclicker transparente, codigo aberto
+//  Akaze - autoclicker transparente, codigo aberto
 // -----------------------------------------------------------------------------
 //  O que este programa FAZ:
 //    - Envia cliques do mouse (esquerdo/direito) numa taxa configuravel (CPS)
@@ -10,9 +10,9 @@
 //    - Opcionalmente so clica quando uma janela especifica esta em foco.
 //    - Jitter (so no clique esquerdo): so age quando a janela ativa parece ser o Minecraft ou um
 //      launcher/client conhecido. Para isso le o TITULO e o NOME DO .EXE da janela ativa (nada mais).
-//    - Nunca clica enquanto a propria janela do GNClicker esta ativa.
+//    - Nunca clica enquanto a propria janela do Akaze esta ativa.
 //    - Bolinha verde: esconde a janela na bandeja do sistema (continua funcionando).
-//    - Toca um som de clique e guarda a configuracao em %APPDATA%\GNClicker.
+//    - Toca um som de clique e guarda a configuracao em %APPDATA%\Akaze.
 //
 //  O que este programa NAO FAZ (de proposito):
 //    - Nao acessa a memoria de outros processos (sem OpenProcess/WriteProcessMemory).
@@ -398,7 +398,7 @@ static bool cursorVisible() {
 }
 
 static bool windowOk() {
-    // nunca clica (nem faz jitter) enquanto a janela do proprio GNClicker esta ativa:
+    // nunca clica (nem faz jitter) enquanto a janela do proprio Akaze esta ativa:
     // senao segurar o botao do mouse para usar o app dispararia o auto click nele mesmo
     if (g_hwnd && GetForegroundWindow() == g_hwnd) return false;
     if (g_restrict.load()) {
@@ -663,10 +663,10 @@ static std::chrono::steady_clock::time_point s_countdownEnd;
 static float g_accent[3]     = { 1.00f, 0.23f, 0.27f };
 static float g_accentLive[3] = { 1.00f, 0.23f, 0.27f };   // cor realmente usada (muda no modo Rainbow)
 
-// ---- salvar/carregar config (%APPDATA%\GNClicker\config.txt) ---------------
+// ---- salvar/carregar config (%APPDATA%\Akaze\config.txt) ---------------
 static std::string cfgPath() {
     const char* ap = getenv("APPDATA");
-    std::string dir = ap ? (std::string(ap) + "\\GNClicker") : std::string("GNClicker");
+    std::string dir = ap ? (std::string(ap) + "\\Akaze") : std::string("Akaze");
     CreateDirectoryA(dir.c_str(), nullptr);
     return dir + "\\config.txt";
 }
@@ -704,6 +704,10 @@ static void saveConfig() {
 }
 static void loadConfig() {
     FILE* f = fopen(cfgPath().c_str(), "r");
+    if (!f) {   // primeira abertura com este nome: aproveita a config da versao antiga (pasta anterior)
+        const char* ap = getenv("APPDATA");
+        if (ap) f = fopen((std::string(ap) + "\\GNClicker\\config.txt").c_str(), "r");
+    }
     if (!f) return;
     char line[256];
     while (fgets(line, sizeof(line), f)) {
@@ -1395,8 +1399,8 @@ static void pageSettings() {
 
     bool pin = g_pinned;
     if (toggleRow("pin", L("Always on top", "Sempre no topo"), &pin, nullptr,
-                  L("Keeps the GNClicker window above all other windows.",
-                    "Mantém a janela do GNClicker acima de todas as outras."))) {
+                  L("Keeps the Akaze window above all other windows.",
+                    "Mantém a janela do Akaze acima de todas as outras."))) {
         g_pinned = pin;
         ::SetWindowPos(g_hwnd, pin ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
@@ -1413,7 +1417,7 @@ static void pageSettings() {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u32(mix(col(0.075f,0.055f,0.065f,1), acc, 0.06f)), 16.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), u32(alpha(acc, 0.30f)), 16.0f);
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(p.x + 16, p.y + 16), ImVec2(p.x + 76, p.y + 76));
-    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "GNClicker 1.0.4");
+    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.1.0");
     dl->AddText(ImVec2(p.x + 92, p.y + 40), u32(kMuted), L("Made in Brazil by Gazake", "Feito no Brasil por Gazake"));
     dl->AddText(ImVec2(p.x + 92, p.y + 62), u32(kMuted), L("MIT License. Interface: Dear ImGui (MIT).", "Licença MIT. Interface: Dear ImGui (MIT)."));
     dl->AddText(ImVec2(p.x + 92, p.y + 82), u32(alpha(kMuted, 0.8f)), L("No network, no persistence, no trace wiping.", "Sem rede, sem persistência, sem apagar rastros."));
@@ -1472,7 +1476,7 @@ static void drawUI() {
     }
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(o.x + 92, o.y + 9), ImVec2(o.x + 92 + 28, o.y + 9 + 28));
     ImGui::PushFont(g_fontBold, 15.0f);
-    dl->AddText(ImVec2(o.x + 128, o.y + (kTitleH - ImGui::GetFontSize()) * 0.5f), u32(col(0.78f,0.78f,0.84f,1)), "GNClicker");
+    dl->AddText(ImVec2(o.x + 128, o.y + (kTitleH - ImGui::GetFontSize()) * 0.5f), u32(col(0.78f,0.78f,0.84f,1)), "Akaze");
     ImGui::PopFont();
 
     // barra lateral
@@ -1526,14 +1530,14 @@ int main(int, char**) {
     HICON hIcon = (HICON)::LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L,
         hInst, hIcon, ::LoadCursor(nullptr, IDC_ARROW), nullptr, nullptr,
-        L"GNClicker", hIcon };
+        L"Akaze", hIcon };
     ::RegisterClassExW(&wc);
     // janela de tamanho FIXO e SEM moldura: a barra de titulo e desenhada pelo proprio programa.
     int winW = (int)kWinW, winH = (int)kWinH;
     int posX = (::GetSystemMetrics(SM_CXSCREEN) - winW) / 2, posY = (::GetSystemMetrics(SM_CYSCREEN) - winH) / 2;
     if (posX < 0) posX = 0;
     if (posY < 0) posY = 0;
-    HWND hwnd = ::CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"GNClicker",
+    HWND hwnd = ::CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, L"Akaze",
         WS_POPUP | WS_MINIMIZEBOX, posX, posY, winW, winH,
         nullptr, nullptr, wc.hInstance, nullptr);
     g_hwnd = hwnd;
@@ -1730,7 +1734,7 @@ static void trayAdd() {
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = (HICON)::LoadImageW(::GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
                                     ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON), LR_SHARED);
-    wcsncpy(nid.szTip, L"GNClicker", 63);
+    wcsncpy(nid.szTip, L"Akaze", 63);
     g_trayActive = ::Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
 }
 static void trayRemove() {
@@ -1766,7 +1770,7 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         } else if (lParam == WM_RBUTTONUP) {
             POINT pt; ::GetCursorPos(&pt);
             HMENU menu = ::CreatePopupMenu();
-            ::AppendMenuW(menu, MF_STRING, ID_TRAY_SHOW, g_lang == 1 ? L"Mostrar GNClicker" : L"Show GNClicker");
+            ::AppendMenuW(menu, MF_STRING, ID_TRAY_SHOW, g_lang == 1 ? L"Mostrar Akaze" : L"Show Akaze");
             ::AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, g_lang == 1 ? L"Sair" : L"Exit");
             ::SetForegroundWindow(hWnd);
             int cmd = (int)::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hWnd, nullptr);
