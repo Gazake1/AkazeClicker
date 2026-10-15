@@ -17,7 +17,7 @@ O Akaze aperta o botão do mouse por você, na velocidade que escolher (1 a 100 
 segura o botão. Arme com uma tecla de atalho, segure o botão do mouse e ele clica enquanto você segurar. Foi pensado
 para Minecraft, mas o núcleo funciona em qualquer janela.
 
-- **Clicker:** lado esquerdo e direito com tecla e CPS próprios, *Inventory*, *Jitter* (só no clique esquerdo, até 15, **e só quando o Minecraft ou um launcher/client conhecido está na janela ativa**; o auto click funciona em qualquer programa) e janela alvo.
+- **Clicker:** lado esquerdo e direito configurados separadamente (tecla, CPS, *Inventory*, som, janela alvo e whitelist de slots), *Inventory*, *Jitter* (só no clique esquerdo, até 15, **e só quando o Minecraft ou um launcher/client conhecido está na janela ativa**; o auto click funciona em qualquer programa) e janela alvo.
 - **Macros:** *Slot Whitelist* (com *Fetch Binds*), *Throwpot* e *W-Tap*.
 - **Config:** 8 sons de mouse embutidos, 4 sintetizados e qualquer `.wav` na pasta `sounds`; cor do tema e modo Rainbow.
   Tudo é salvo em `%APPDATA%\Akaze\config.txt`.

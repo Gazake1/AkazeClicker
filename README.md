@@ -32,7 +32,7 @@ It was designed for Minecraft, but the core works in any window.
 ### Clicker
 | Feature | What it does |
 |---|---|
-| **Left / Right** | Each side has its own hotkey and CPS (1–100) |
+| **Left / Right** | Each side is configured separately: hotkey, CPS (1–100), Inventory, click sound, target window and slot whitelist |
 | **Inventory** | Click with the cursor visible (off = in-game only) |
 | **Blockhit** | *Coming soon* (temporarily unavailable) |
 | **Jitter + Speed** | Tiny mouse movements on every left click, undone on the next one (up to 15 px). Works **only while Minecraft, or a known Minecraft launcher/client, is the active window**; auto click itself works everywhere. Left click only |

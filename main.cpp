@@ -81,27 +81,29 @@ struct Clicker {
     std::atomic<int>  armKey  { 0 };       // tecla que ARMA/DESARMA este lado (configuravel)
     std::atomic<bool> armed   { false };   // estado ligado/desligado deste lado
     bool left = true;                      // true=botao esquerdo, false=direito
+    // configuracoes proprias de cada lado (esquerdo e direito sao independentes)
+    std::atomic<bool> inventory   { true };    // clicar com o cursor visivel (inventario/menus)
+    std::atomic<int>  sound       { -1 };      // indice em g_sndList (-1 = sem som)
+    std::atomic<bool> slotFilter  { false };   // whitelist de slots da hotbar
+    std::atomic<bool> slotAllowed[9];          // slots em que este lado pode agir
+    std::atomic<bool> jitter      { false };   // so tem efeito no lado esquerdo
+    std::atomic<int>  jitterSpeed { 2 };       // amplitude do jitter em pixels (1..15)
+    std::atomic<bool> restrictWin { false };   // so clicar na janela alvo deste lado
+    std::atomic<uintptr_t> targetHwnd { 0 };
+    std::string       targetTitle;             // vazio = nenhuma janela capturada (so a thread da UI mexe)
 };
 
 static Clicker               g_left;       // botao esquerdo
 static Clicker               g_right;      // botao direito
 static std::atomic<bool>     g_running     { true };
 static std::atomic<bool>     g_randomize   { true };   // jitter humano no CPS
-static std::atomic<bool>     g_restrict    { false };  // so clicar na janela alvo
-static std::atomic<uintptr_t> g_targetHwnd { 0 };
-static std::string           g_targetTitle;   // vazio = nenhuma janela capturada ainda
 
 // Idioma da interface: 0 = English (padrao), 1 = Portugues. L(en, pt) escolhe o texto.
 static int g_lang = 0;
 static inline const char* L(const char* en, const char* pt) { return g_lang == 1 ? pt : en; }
 
 // ---- macros e filtros (blockhit, jitter, slots, throwpot, W-tap) ---------------
-static std::atomic<bool> g_inventory   { true };   // clicar com o cursor visivel (inventario/menus)
 static std::atomic<bool> g_blockhit    { false };  // bloqueia (RMB) junto com cada clique esquerdo
-static std::atomic<bool> g_jitter      { false };  // pequenos movimentos de mouse ao clicar
-static std::atomic<int>  g_jitterSpeed { 2 };      // amplitude do jitter em pixels (1..10)
-static std::atomic<bool> g_slotFilter  { false };  // whitelist de slots da hotbar
-static std::atomic<bool> g_slotAllowed[9];         // slots em que o clicker pode agir
 static std::atomic<int>  g_curSlot     { 0 };      // slot atual (0..8), estimado por teclas/scroll
 static std::atomic<int>  g_hotbarVK[9];            // VK de cada slot (padrao 1..9)
 static std::atomic<int>  g_throwKey    { 0 };      // tecla do throwpot
@@ -151,7 +153,6 @@ struct Snd { std::string name; const unsigned char* data; int len; };
 static std::vector<std::vector<unsigned char>> g_customStorage;  // bytes dos .wav da pasta
 static std::vector<std::string>                g_customNames;
 static std::vector<Snd>                        g_sndList;        // lista final (embutidos + custom)
-static std::atomic<int> g_sound { -1 };
 
 static std::string exeDir() {
     char path[MAX_PATH] = {0};
@@ -203,21 +204,21 @@ static void buildSoundList() {
     }
 }
 
-static void playClickSound() {
-    int si = g_sound.load();
+static void playClickSound(const Clicker* c) {
+    int si = c->sound.load();
     if (si >= 0 && si < (int)g_sndList.size())
         PlaySoundA((LPCSTR)g_sndList[si].data, nullptr, SND_MEMORY | SND_ASYNC);   // flags 5 = memoria + assincrono
 }
 
-static std::string currentSoundName() {
-    int si = g_sound.load();
+static std::string currentSoundName(const Clicker* c) {
+    int si = c->sound.load();
     return (si >= 0 && si < (int)g_sndList.size()) ? g_sndList[si].name : std::string();
 }
 
-static void setSoundByName(const std::string& name) {
+static void setSoundByName(Clicker* c, const std::string& name) {
     for (size_t i = 0; i < g_sndList.size(); ++i)
-        if (g_sndList[i].name == name) { g_sound.store((int)i); return; }
-    g_sound.store(-1);
+        if (g_sndList[i].name == name) { c->sound.store((int)i); return; }
+    c->sound.store(-1);
 }
 
 // Inicializa botoes + PADRAO: ambos os lados usam a tecla R para ativar
@@ -232,10 +233,13 @@ static void initClickers() {
     g_right.key.store(VK_RBUTTON);  // segurar o botao direito dispara
     g_right.armKey.store('R');
     g_right.cps.store(12);
-    for (int i = 0; i < 9; ++i) {
-        g_hotbarVK[i].store('1' + i);     // padrao do Minecraft: teclas 1..9
-        g_slotAllowed[i].store(true);
+    for (Clicker* c : { &g_left, &g_right }) {
+        c->inventory.store(true); c->slotFilter.store(false);
+        c->jitter.store(false);   c->jitterSpeed.store(2);
+        c->restrictWin.store(false);
+        for (int i = 0; i < 9; ++i) c->slotAllowed[i].store(true);
     }
+    for (int i = 0; i < 9; ++i) g_hotbarVK[i].store('1' + i);   // padrao do Minecraft: teclas 1..9
 }
 
 // ---- binds da hotbar do Minecraft (le %APPDATA%\.minecraft\options.txt) ------
@@ -397,20 +401,20 @@ static bool cursorVisible() {
     return visible;
 }
 
-static bool windowOk() {
+static bool windowOk(const Clicker* c) {
     // nunca clica (nem faz jitter) enquanto a janela do proprio Akaze esta ativa:
     // senao segurar o botao do mouse para usar o app dispararia o auto click nele mesmo
     if (g_hwnd && GetForegroundWindow() == g_hwnd) return false;
-    if (g_restrict.load()) {
-        HWND target = (HWND)g_targetHwnd.load();
+    if (c->restrictWin.load()) {
+        HWND target = (HWND)c->targetHwnd.load();
         if (!target || GetForegroundWindow() != target) return false;
     }
     // "Inventory" desligado: so age in-game (cursor oculto), nunca em menus/inventario.
-    if (!g_inventory.load() && cursorVisible()) return false;
+    if (!c->inventory.load() && cursorVisible()) return false;
     // whitelist de slots da hotbar
-    if (g_slotFilter.load()) {
+    if (c->slotFilter.load()) {
         int s = g_curSlot.load();
-        if (s < 0 || s > 8 || !g_slotAllowed[s].load()) return false;
+        if (s < 0 || s > 8 || !c->slotAllowed[s].load()) return false;
     }
     return true;
 }
@@ -472,7 +476,7 @@ static void clickWorker(Clicker* c) {
             // modo 0 (padrao): so clica enquanto o botao do mouse esta segurado
             // modo 1 (Settings): armado = clica continuamente, como um autoclicker comum
             want = (g_clickMode.load() == 1) ? true : inputDown(c->key.load());
-        if (want && windowOk()) {
+        if (want && windowOk(c)) {
             // intervalo do ciclo (CPS + variacao humana)
             int cps = c->cps.load();
             if (cps < 1)   cps = 1;
@@ -496,8 +500,8 @@ static void clickWorker(Clicker* c) {
             if (c->left) {
                 if (g_wtap.load()) g_wtapRequest.store(true);
                 // jitter so no Minecraft (ou launcher/client conhecido); o clique em si funciona em qualquer janela
-                if (g_jitter.load() && g_mcFocus.load()) {
-                    int sp = g_jitterSpeed.load();
+                if (c->jitter.load() && g_mcFocus.load()) {
+                    int sp = c->jitterSpeed.load();
                     if (sp < 1) sp = 1; if (sp > 15) sp = 15;
                     std::uniform_int_distribution<int> jd(-sp, sp);
                     int nx = jd(rng), ny = jd(rng);
@@ -506,7 +510,7 @@ static void clickWorker(Clicker* c) {
                 }
             }
             preciseSleepUs(halfUs);
-            playClickSound();
+            playClickSound(c);
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
@@ -617,7 +621,7 @@ static void wtapWorker() {
         if (g_wtap.load() && !g_wtapOnlyAuto.load() && physL && !prevPhysL) g_wtapRequest.store(true);
         prevPhysL = physL;
 
-        if (g_wtapRequest.exchange(false) && g_wtap.load() && keyDown('W') && windowOk()) {
+        if (g_wtapRequest.exchange(false) && g_wtap.load() && keyDown('W') && windowOk(&g_left)) {
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last).count() >= 250) {
                 int dl = g_wtapDelay.load();
@@ -648,7 +652,7 @@ static ImFont* g_fontBold = nullptr;                 // Segoe UI Bold (numero gr
 static int    s_page = 0;                            // 0 Clicker, 1 Macros, 2 Sounds, 3 Binds, 4 Themes, 5 Settings
 static int    s_side = 0;                            // 0 = esquerdo, 1 = direito
 static bool   g_pinned = false;                      // janela sempre no topo
-static int    s_lastSound = 0;                       // para o interruptor "Click Sounds"
+static int    s_lastSound[2] = { 0, 0 };                       // para o interruptor "Click Sounds"
 static std::string s_bindsMsg;                       // retorno do botao "Fetch binds"
 
 static bool  s_capturing = false;                    // capturando uma tecla/botao?
@@ -682,15 +686,19 @@ static void saveConfig() {
     fprintf(f, "accR=%.4f\n",  g_accent[0]);
     fprintf(f, "accG=%.4f\n",  g_accent[1]);
     fprintf(f, "accB=%.4f\n",  g_accent[2]);
-    fprintf(f, "soundName=%s\n", currentSoundName().c_str());
-    fprintf(f, "inventory=%d\n", g_inventory.load() ? 1 : 0);
     fprintf(f, "blockhit=%d\n",  g_blockhit.load() ? 1 : 0);
-    fprintf(f, "jitter=%d\n",    g_jitter.load() ? 1 : 0);
-    fprintf(f, "jitterSpeed=%d\n", g_jitterSpeed.load());
-    fprintf(f, "slotFilter=%d\n", g_slotFilter.load() ? 1 : 0);
-    int mask = 0;
-    for (int i = 0; i < 9; ++i) if (g_slotAllowed[i].load()) mask |= (1 << i);
-    fprintf(f, "slotMask=%d\n", mask);
+    // cada lado tem as suas: as chaves do esquerdo nao mudam, as do direito terminam com "R"
+    fprintf(f, "jitter=%d\n",      g_left.jitter.load() ? 1 : 0);
+    fprintf(f, "jitterSpeed=%d\n", g_left.jitterSpeed.load());
+    for (int sd = 0; sd < 2; ++sd) {
+        const Clicker* c = sd == 0 ? &g_left : &g_right; const char* x = sd == 0 ? "" : "R";
+        fprintf(f, "soundName%s=%s\n", x, currentSoundName(c).c_str());
+        fprintf(f, "inventory%s=%d\n", x, c->inventory.load() ? 1 : 0);
+        fprintf(f, "slotFilter%s=%d\n", x, c->slotFilter.load() ? 1 : 0);
+        int mask = 0;
+        for (int i = 0; i < 9; ++i) if (c->slotAllowed[i].load()) mask |= (1 << i);
+        fprintf(f, "slotMask%s=%d\n", x, mask);
+    }
     for (int i = 0; i < 9; ++i) fprintf(f, "hotbar%d=%d\n", i, g_hotbarVK[i].load());
     fprintf(f, "throwKey=%d\n",   g_throwKey.load());
     fprintf(f, "throwSlot=%d\n",  g_throwSlot.load());
@@ -709,6 +717,7 @@ static void loadConfig() {
         if (ap) f = fopen((std::string(ap) + "\\GNClicker\\config.txt").c_str(), "r");
     }
     if (!f) return;
+    bool seenR = false;   // config de versao anterior (sem chaves do lado direito): o direito herda o esquerdo
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         std::string s = line;
@@ -726,13 +735,17 @@ static void loadConfig() {
         else if (k == "accR")    g_accent[0] = (float)atof(v.c_str());
         else if (k == "accG")    g_accent[1] = (float)atof(v.c_str());
         else if (k == "accB")    g_accent[2] = (float)atof(v.c_str());
-        else if (k == "soundName") setSoundByName(v);
-        else if (k == "inventory")   g_inventory.store(atoi(v.c_str()) != 0);
+        else if (k == "soundName")  setSoundByName(&g_left, v);
+        else if (k == "soundNameR") { setSoundByName(&g_right, v); seenR = true; }
+        else if (k == "inventory")   g_left.inventory.store(atoi(v.c_str()) != 0);
+        else if (k == "inventoryR")  g_right.inventory.store(atoi(v.c_str()) != 0);
         else if (k == "blockhit")    { /* indisponivel por enquanto: ignora o valor salvo */ }
-        else if (k == "jitter")      g_jitter.store(atoi(v.c_str()) != 0);
-        else if (k == "jitterSpeed") { int iv=atoi(v.c_str()); g_jitterSpeed.store(iv<1?1:(iv>15?15:iv)); }
-        else if (k == "slotFilter")  g_slotFilter.store(atoi(v.c_str()) != 0);
-        else if (k == "slotMask")    { int m=atoi(v.c_str()); for (int i=0;i<9;++i) g_slotAllowed[i].store((m>>i)&1); }
+        else if (k == "jitter")      g_left.jitter.store(atoi(v.c_str()) != 0);
+        else if (k == "jitterSpeed") { int iv=atoi(v.c_str()); g_left.jitterSpeed.store(iv<1?1:(iv>15?15:iv)); }
+        else if (k == "slotFilter")  g_left.slotFilter.store(atoi(v.c_str()) != 0);
+        else if (k == "slotFilterR") g_right.slotFilter.store(atoi(v.c_str()) != 0);
+        else if (k == "slotMask")    { int m=atoi(v.c_str()); for (int i=0;i<9;++i) g_left.slotAllowed[i].store((m>>i)&1); }
+        else if (k == "slotMaskR")   { int m=atoi(v.c_str()); for (int i=0;i<9;++i) g_right.slotAllowed[i].store((m>>i)&1); }
         else if (k.compare(0, 6, "hotbar") == 0 && k.size() == 7 && isdigit((unsigned char)k[6])) {
             int i = k[6]-'0'; int vk = atoi(v.c_str()); if (i < 9 && vk > 0) g_hotbarVK[i].store(vk);
         }
@@ -746,20 +759,25 @@ static void loadConfig() {
         else if (k == "rainbow")     g_rainbow.store(atoi(v.c_str()) != 0);
     }
     fclose(f);
+    if (!seenR) {
+        g_right.inventory.store(g_left.inventory.load());
+        g_right.slotFilter.store(g_left.slotFilter.load());
+        for (int i = 0; i < 9; ++i) g_right.slotAllowed[i].store(g_left.slotAllowed[i].load());
+        g_right.sound.store(g_left.sound.load());
+    }
 }
 
 // Volta tudo ao padrao (botao "Reset settings").
 static void resetDefaults() {
     initClickers();
     g_left.armed.store(false); g_right.armed.store(false);
-    g_inventory.store(true); g_blockhit.store(false); g_jitter.store(false); g_jitterSpeed.store(2);
-    g_slotFilter.store(false);
+    g_blockhit.store(false);
     g_throwKey.store(0); g_throwSlot.store(1); g_throwDelay.store(50); g_throwReturn.store(true);
     g_wtap.store(false); g_wtapDelay.store(30); g_wtapOnlyAuto.store(true);
     g_rainbow.store(false);
     g_clickMode.store(0);
     g_accent[0] = 1.00f; g_accent[1] = 0.23f; g_accent[2] = 0.27f;
-    setSoundByName("Default");
+    setSoundByName(&g_left, "Default"); setSoundByName(&g_right, "Default");
     saveConfig();
 }
 
@@ -1110,8 +1128,8 @@ static void pageClicker() {
     Clicker* c = (s_side == 0) ? &g_left : &g_right;
     bool leftSide = (s_side == 0);
     segmented("side", L("Left Click", "Clique Esquerdo"), L("Right Click", "Clique Direito"), &s_side, 300.0f,
-              L("Choose which mouse button you are setting up. Each side has its own CPS, hotkey and on/off state.",
-                "Escolha qual botão do mouse você está configurando. Cada lado tem seu próprio CPS, tecla e estado ligado/desligado."));
+              L("Choose which mouse button you are setting up. Each side has its own settings: CPS, hotkey, on/off, Inventory, sound, target window and slot whitelist.",
+                "Escolha qual botão do mouse você está configurando. Cada lado tem suas próprias configurações: CPS, tecla, ligado/desligado, Inventory, som, janela alvo e whitelist de slots."));
     ImGui::Dummy(ImVec2(0, 2));
 
     // cartao grande com o CPS
@@ -1167,45 +1185,46 @@ static void pageClicker() {
 
     // Jitter e Blockhit so existem para o clique ESQUERDO
     if (leftSide) {
-        bool jt = g_jitter.load();
+        bool jt = c->jitter.load();
         if (toggleRow("jitter", "Jitter", &jt, L("(Minecraft only)", "(só no Minecraft)"),
                       L("Adds tiny random mouse movements while auto clicking, so your aim looks less robotic. It only works while Minecraft (or a known Minecraft launcher or client) is the active window; the auto click itself works everywhere.",
-                        "Adiciona pequenos movimentos aleatórios do mouse enquanto clica, para a mira parecer menos robótica. Só funciona quando o Minecraft (ou um launcher/client conhecido) é a janela ativa; o clique automático em si funciona em qualquer lugar."))) { g_jitter.store(jt); saveConfig(); }
+                        "Adiciona pequenos movimentos aleatórios do mouse enquanto clica, para a mira parecer menos robótica. Só funciona quando o Minecraft (ou um launcher/client conhecido) é a janela ativa; o clique automático em si funciona em qualquer lugar."))) { c->jitter.store(jt); saveConfig(); }
         if (jt) {
-            int sp = g_jitterSpeed.load();
+            int sp = c->jitterSpeed.load();
             if (accentSlider("jspeed", L("Jitter intensity", "Intensidade do jitter"), &sp, 1, 15,
                              L("How far the mouse moves on each click, in pixels (1 to 15). Lower is subtler.",
-                               "Quanto o mouse se move a cada clique, em pixels (1 a 15). Menor é mais discreto."))) { g_jitterSpeed.store(sp); saveConfig(); }
+                               "Quanto o mouse se move a cada clique, em pixels (1 a 15). Menor é mais discreto."))) { c->jitterSpeed.store(sp); saveConfig(); }
         }
         disabledRow("bh", "Blockhit", L("(coming soon)", "(em breve)"),
                     L("Blockhit is temporarily unavailable and will come back in a future update.",
                       "O Blockhit está indisponível por enquanto e volta em uma atualização futura."));
     }
-    bool inv = g_inventory.load();
+    bool inv = c->inventory.load();
     if (toggleRow("inv", "Inventory", &inv, L("(click with the cursor visible)", "(clicar com o cursor visível)"),
                   L("Allows clicking while the mouse cursor is visible (menus, inventories, the desktop). When off, it only clicks while the cursor is hidden, which is what happens inside a game.",
-                    "Permite clicar enquanto o cursor do mouse está visível (menus, inventários, área de trabalho). Desligado, só clica com o cursor escondido, que é o que acontece dentro de um jogo."))) { g_inventory.store(inv); saveConfig(); }
-    bool snd = g_sound.load() >= 0;
+                    "Permite clicar enquanto o cursor do mouse está visível (menus, inventários, área de trabalho). Desligado, só clica com o cursor escondido, que é o que acontece dentro de um jogo."))) { c->inventory.store(inv); saveConfig(); }
+    bool snd = c->sound.load() >= 0;
     if (toggleRow("snd", L("Click Sounds", "Sons de Clique"), &snd, nullptr,
                   L("Plays a sound on every automatic click. Pick which sound on the Sounds page.",
                     "Toca um som a cada clique automático. Escolha o som na página Sounds."))) {
-        if (snd) g_sound.store(s_lastSound >= 0 ? s_lastSound : 0); else { s_lastSound = g_sound.load(); g_sound.store(-1); }
+        int& ls = s_lastSound[s_side];
+        if (snd) c->sound.store(ls >= 0 ? ls : 0); else { ls = c->sound.load(); c->sound.store(-1); }
         saveConfig();
     }
-    bool rs = g_restrict.load();
+    bool rs = c->restrictWin.load();
     if (toggleRow("win", L("Target window only", "Só na janela alvo"), &rs, nullptr,
                   L("Limits the auto clicker to a single window. Press Capture, switch to that window within 3 seconds, and it will only click while that window is active.",
-                    "Limita o clique automático a uma única janela. Aperte Capturar, troque para essa janela em até 3 segundos, e ele só clica enquanto ela estiver ativa."))) g_restrict.store(rs);
+                    "Limita o clique automático a uma única janela. Aperte Capturar, troque para essa janela em até 3 segundos, e ele só clica enquanto ela estiver ativa."))) c->restrictWin.store(rs);
     // captura de janela alvo
     if (s_countdownActive) {
         auto left = std::chrono::duration_cast<std::chrono::milliseconds>(s_countdownEnd - std::chrono::steady_clock::now()).count();
         if (left <= 0) {
             HWND fg = ::GetForegroundWindow();
-            g_targetHwnd.store((uintptr_t)fg);
+            c->targetHwnd.store((uintptr_t)fg);
             char t[128] = {0};
             ::GetWindowTextA(fg, t, 127);
-            g_targetTitle = t[0] ? t : L("(no title)", "(sem título)");
-            g_restrict.store(true);
+            c->targetTitle = t[0] ? t : L("(no title)", "(sem título)");
+            c->restrictWin.store(true);
             s_countdownActive = false;
         } else {
             std::string lb = std::string(L("Focus your game... ", "Foque o jogo... ")) + std::to_string(left / 1000 + 1);
@@ -1218,7 +1237,7 @@ static void pageClicker() {
         s_countdownEnd = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     }
     ImGui::SameLine();
-    ImGui::TextColored(kMuted, "%s", g_targetTitle.empty() ? L("(none)", "(nenhuma)") : g_targetTitle.c_str());
+    ImGui::TextColored(kMuted, "%s", c->targetTitle.empty() ? L("(none)", "(nenhuma)") : c->targetTitle.c_str());
     ImGui::Dummy(ImVec2(0, 8));
 }
 
@@ -1226,10 +1245,15 @@ static void pageMacros() {
     sectionTitle(L("SLOT WHITELIST", "WHITELIST DE SLOTS"),
                  L("Minecraft hotbar filter: the auto clicker only works while one of the ticked hotbar slots (1 to 9) is selected. Handy to click only with a sword, and not with a block or a bow.",
                    "Filtro da hotbar do Minecraft: o clique automático só funciona enquanto um dos slots marcados (1 a 9) está selecionado. Útil para clicar só com a espada, e não com um bloco ou arco."));
-    bool sf = g_slotFilter.load();
+    Clicker* wc = (s_side == 0) ? &g_left : &g_right;
+    segmented("sideW", L("Left Click", "Clique Esquerdo"), L("Right Click", "Clique Direito"), &s_side, 300.0f,
+              L("The slot whitelist is separate for each mouse button. Choose which one you are editing.",
+                "A whitelist de slots é separada para cada botão do mouse. Escolha qual você está editando."));
+    ImGui::Dummy(ImVec2(0, 2));
+    bool sf = wc->slotFilter.load();
     if (toggleRow("sf", L("Click only on selected slots", "Clicar só nos slots marcados"), &sf, nullptr,
                   L("When on, the auto clicker only clicks while the selected hotbar slot is one of the ticked numbers below.",
-                    "Ligado, o clique automático só clica quando o slot selecionado da hotbar é um dos números marcados abaixo."))) { g_slotFilter.store(sf); saveConfig(); }
+                    "Ligado, o clique automático só clica quando o slot selecionado da hotbar é um dos números marcados abaixo."))) { wc->slotFilter.store(sf); saveConfig(); }
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec4 acc = accentCol();
@@ -1238,8 +1262,8 @@ static void pageMacros() {
         ImVec2 p(p0.x + i * 54.0f, p0.y + 2.0f);
         ImGui::SetCursorScreenPos(p);
         ImGui::PushID(i);
-        bool on = g_slotAllowed[i].load();
-        if (ImGui::InvisibleButton("##slot", ImVec2(46, 46))) { g_slotAllowed[i].store(!on); on = !on; saveConfig(); }
+        bool on = wc->slotAllowed[i].load();
+        if (ImGui::InvisibleButton("##slot", ImVec2(46, 46))) { wc->slotAllowed[i].store(!on); on = !on; saveConfig(); }
         hoverTip(L("Click a number to allow or block that hotbar slot. The small dot shows the slot you are probably holding.",
                    "Clique em um número para permitir ou bloquear esse slot da hotbar. O pontinho mostra o slot que você provavelmente está segurando."));
         bool hv = ImGui::IsItemHovered();
@@ -1300,9 +1324,14 @@ static void pageMacros() {
 }
 
 static void pageSounds() {
+    Clicker* sc = (s_side == 0) ? &g_left : &g_right;
+    segmented("sideS", L("Left Click", "Clique Esquerdo"), L("Right Click", "Clique Direito"), &s_side, 300.0f,
+              L("Each mouse button has its own click sound. Choose which one you are editing.",
+                "Cada botão do mouse tem o seu próprio som de clique. Escolha qual você está editando."));
+    ImGui::Dummy(ImVec2(0, 2));
     ImGui::TextColored(kMuted, "%s", L("Pick the click sound. Click a row to preview it.", "Escolha o som do clique. Clique em uma linha para ouvir."));
     ImGui::Dummy(ImVec2(0, 2));
-    int cur = g_sound.load();
+    int cur = sc->sound.load();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec4 acc = accentCol();
     int total = (int)g_sndList.size() + 1;        // +1 = "Nenhum"
@@ -1313,7 +1342,7 @@ static void pageSounds() {
         ImVec2 p = ImGui::GetCursorScreenPos();
         float w = ImGui::GetContentRegionAvail().x, h = 42.0f;
         if (ImGui::InvisibleButton("##snd", ImVec2(w, h))) {
-            g_sound.store(idx); if (idx >= 0) s_lastSound = idx; saveConfig(); playClickSound();
+            sc->sound.store(idx); if (idx >= 0) s_lastSound[s_side] = idx; saveConfig(); playClickSound(sc);
         }
         bool hv = ImGui::IsItemHovered(), sel = (cur == idx);
         if (hv) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -1436,7 +1465,7 @@ static void pageSettings() {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u32(mix(col(0.075f,0.055f,0.065f,1), acc, 0.06f)), 16.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), u32(alpha(acc, 0.30f)), 16.0f);
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(p.x + 16, p.y + 16), ImVec2(p.x + 76, p.y + 76));
-    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.1.1");
+    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.2.0");
     dl->AddText(ImVec2(p.x + 92, p.y + 40), u32(kMuted), L("Made in Brazil by Gazake", "Feito no Brasil por Gazake"));
     dl->AddText(ImVec2(p.x + 92, p.y + 62), u32(kMuted), L("MIT License. Interface: Dear ImGui (MIT).", "Licença MIT. Interface: Dear ImGui (MIT)."));
     dl->AddText(ImVec2(p.x + 92, p.y + 82), u32(alpha(kMuted, 0.8f)), L("No network, no persistence, no trace wiping.", "Sem rede, sem persistência, sem apagar rastros."));
@@ -1542,7 +1571,7 @@ int main(int, char**) {
     initClickers();
     loadCustomSounds();   // le .wav da pasta "sounds"
     buildSoundList();     // monta a lista (embutidos + custom)
-    setSoundByName("Default");  // som padrao
+    setSoundByName(&g_left, "Default"); setSoundByName(&g_right, "Default");  // som padrao
     loadConfig();         // restaura a config salva (teclas, CPS, cor, som) -> sobrescreve o padrao
 
     HINSTANCE hInst = GetModuleHandle(nullptr);
