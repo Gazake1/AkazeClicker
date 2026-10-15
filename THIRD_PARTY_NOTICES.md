@@ -36,3 +36,9 @@ SOFTWARE.
 The mouse-click sound samples embedded in the program (`click_sounds.h`, also available as `.wav` files in
 `dist/sounds/`) are free-to-use audio samples, included for the user's convenience. The four synthesized
 sounds in `sounds_data.h` (Click, Tick, Pop, Mouse) were generated for this project.
+
+## Inter (font)
+
+The user interface font, embedded in the executable (SemiBold and ExtraBold).
+Project: <https://github.com/rsms/inter>. Copyright (c) 2016 The Inter Project Authors. Licensed under the
+SIL Open Font License, Version 1.1 (<https://openfontlicense.org>).

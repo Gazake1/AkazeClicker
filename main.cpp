@@ -51,6 +51,7 @@
 #include "logo_data.h"    // pixels da logo (imagem fornecida pelo usuario)
 #include "sounds_data.h"  // sons de clique originais (sintetizados)
 #include "click_sounds.h" // sons de clique embutidos no exe
+#include "font_data.h"    // fonte Inter (OFL)
 #include <mmsystem.h>     // PlaySound
 #include <dwmapi.h>       // cantos arredondados e sombra da janela sem moldura
 
@@ -648,7 +649,7 @@ static const float kSideW  = 176.0f;                 // largura da barra lateral
 #define ID_TRAY_SHOW    1001
 #define ID_TRAY_EXIT    1002
 
-static ImFont* g_fontBold = nullptr;                 // Segoe UI Bold (numero grande do CPS)
+static ImFont* g_fontBold = nullptr;                 // Inter ExtraBold (numero grande do CPS)
 static int    s_page = 0;                            // 0 Clicker, 1 Macros, 2 Sounds, 3 Binds, 4 Themes, 5 Settings
 static int    s_side = 0;                            // 0 = esquerdo, 1 = direito
 static bool   g_pinned = false;                      // janela sempre no topo
@@ -1465,7 +1466,7 @@ static void pageSettings() {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), u32(mix(col(0.075f,0.055f,0.065f,1), acc, 0.06f)), 16.0f);
     dl->AddRect(p, ImVec2(p.x + w, p.y + h), u32(alpha(acc, 0.30f)), 16.0f);
     if (g_logoSRV) dl->AddImage((ImTextureID)g_logoSRV, ImVec2(p.x + 16, p.y + 16), ImVec2(p.x + 76, p.y + 76));
-    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.2.0");
+    dl->AddText(ImVec2(p.x + 92, p.y + 16), u32(kText), "Akaze 1.2.1");
     dl->AddText(ImVec2(p.x + 92, p.y + 40), u32(kMuted), L("Made in Brazil by Gazake", "Feito no Brasil por Gazake"));
     dl->AddText(ImVec2(p.x + 92, p.y + 62), u32(kMuted), L("MIT License. Interface: Dear ImGui (MIT).", "Licença MIT. Interface: Dear ImGui (MIT)."));
     dl->AddText(ImVec2(p.x + 92, p.y + 82), u32(alpha(kMuted, 0.8f)), L("No network, no persistence, no trace wiping.", "Sem rede, sem persistência, sem apagar rastros."));
@@ -1611,15 +1612,13 @@ int main(int, char**) {
     io.IniFilename = nullptr;   // nao criar/ler imgui.ini
     ImGui::StyleColorsDark();
     setupStyle();
-    {   // fontes: Segoe UI do proprio Windows (se existir); senao a fonte vetorial embutida do ImGui
-        char wd[MAX_PATH] = {0};
-        ::GetWindowsDirectoryA(wd, MAX_PATH);
-        std::string fr = std::string(wd) + "\\Fonts\\segoeui.ttf", fb = std::string(wd) + "\\Fonts\\segoeuib.ttf";
-        ImFont* reg = (::GetFileAttributesA(fr.c_str()) != INVALID_FILE_ATTRIBUTES) ? io.Fonts->AddFontFromFileTTF(fr.c_str(), 15.0f) : nullptr;
+    {   // fonte Inter embutida no exe (Regular + Bold); se falhar, a fonte vetorial do ImGui
+        ImFontConfig fc; fc.FontDataOwnedByAtlas = false;   // os dados sao estaticos
+        ImFont* reg = io.Fonts->AddFontFromMemoryTTF((void*)g_interRegular, (int)g_interRegular_len, 15.0f, &fc);
         if (!reg) reg = io.Fonts->AddFontDefaultVector();
-        g_fontBold = (::GetFileAttributesA(fb.c_str()) != INVALID_FILE_ATTRIBUTES) ? io.Fonts->AddFontFromFileTTF(fb.c_str(), 15.0f) : nullptr;
+        g_fontBold = io.Fonts->AddFontFromMemoryTTF((void*)g_interBold, (int)g_interBold_len, 15.0f, &fc);
         if (!g_fontBold) g_fontBold = reg;
-        ImGui::GetStyle().FontSizeBase = 15.0f;
+        ImGui::GetStyle().FontSizeBase = 14.0f;
     }
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
